@@ -407,7 +407,7 @@
           h("div", { class: "meta" },
             h("span", { class: "exp" }, fmtExpiry(i.best_before_date)),
             h("span", { class: "amount" }, `× ${fmtAmount(i.amount)}`)),
-          h("div", { class: "meta" }, h("span", {}, i.sub ? `${i.major} › ${i.sub}` : i.major), h("span", {}, i.location_name || "")))
+          h("div", { class: "meta" }, h("span", {}, i.sub ? `${i.major} › ${i.sub}` : i.major), h("span", {}, (i.stock_locations && i.stock_locations.length ? i.stock_locations.join(", ") : i.location_name) || "")))
       ));
     }
 

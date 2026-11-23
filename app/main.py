@@ -113,6 +113,9 @@ def create_app(
         except (PrinterError, LabelError) as exc:
             logger.warning("Label print failed for %s: %s", stock_id, exc)
             return {"ok": False, "error": str(exc)}
+        except Exception as exc:  # never turn a successful stock add into an HTTP 500
+            logger.exception("Unexpected error printing label for %s", stock_id)
+            return {"ok": False, "error": f"Printing failed: {exc.__class__.__name__}: {exc}"}
         return {"ok": True, **result}
 
     # -------------------------------------------------------------------- API

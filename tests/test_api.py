@@ -54,6 +54,13 @@ def test_inventory_lists_total_current_stock(client):
     assert butter["amount"] == 2
     assert butter["best_before_date"] == "2030-01-05"
     assert butter["major"] == "Dairy"
+    assert butter["stock_locations"] == ["Fridge"]
+
+
+def test_inventory_locations_follow_moved_stock(client):
+    assert client.post("/api/stock/chicken1/move", json={"location_id": 1}).status_code == 200
+    chicken = next(i for i in client.get("/api/inventory").json()["items"] if i["name"] == "Chicken Thighs")
+    assert chicken["stock_locations"] == ["Fridge"]
 
 
 def test_lookup_stock_label_highlights_entry(client):
@@ -196,6 +203,18 @@ def test_add_still_succeeds_when_printer_fails(client, printer, fake_grocy):
     printer.fail = "/dev/usb/lp0 not found"
     body = client.post("/api/stock/add", json={"product_id": 10}).json()
     assert body["print"] == {"ok": False, "error": "/dev/usb/lp0 not found"}
+    assert body["stock_id"] in [e["stock_id"] for e in fake_grocy.stock]
+
+
+def test_add_still_succeeds_on_unexpected_print_error(client, printer, fake_grocy):
+    def boom(image):
+        raise RuntimeError("driver exploded")
+
+    printer.print_image = boom
+    response = client.post("/api/stock/add", json={"product_id": 10})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["print"]["ok"] is False and "driver exploded" in body["print"]["error"]
     assert body["stock_id"] in [e["stock_id"] for e in fake_grocy.stock]
 
 

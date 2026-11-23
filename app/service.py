@@ -92,11 +92,23 @@ class InventoryService:
         }
 
     async def inventory(self) -> dict:
-        stock, groups, locations = await asyncio.gather(
-            self.grocy.current_stock(), self.grocy.product_groups(), self.grocy.locations()
+        stock, groups, locations, entries = await asyncio.gather(
+            self.grocy.current_stock(),
+            self.grocy.product_groups(),
+            self.grocy.locations(),
+            self.grocy.get_objects("stock"),
         )
         group_names = {int(g["id"]): g.get("name", "") for g in groups}
         location_names = _location_names(locations)
+        # Where the stock actually is (entries may have been moved away from the product's default location)
+        stored_at: dict[int, set[str]] = {}
+        for entry in entries:
+            loc_id = entry.get("location_id")
+            if loc_id in (None, "") or float(entry.get("amount") or 0) <= 0:
+                continue
+            name = location_names.get(int(loc_id))
+            if name:
+                stored_at.setdefault(int(entry["product_id"]), set()).add(name)
         items = []
         for row in stock:
             product = row.get("product") or {"id": row["product_id"], "name": f"Product #{row['product_id']}"}
@@ -110,6 +122,7 @@ class InventoryService:
                     "product_id": summary["id"],
                     "amount": amount,
                     "best_before_date": row.get("best_before_date"),
+                    "stock_locations": sorted(stored_at.get(summary["id"], set()), key=str.lower),
                 }
             )
         items.sort(key=lambda i: i["name"].lower())
