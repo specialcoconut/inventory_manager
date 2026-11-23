@@ -106,13 +106,18 @@
   // --------------------------------------------------------- scan listener
   // The Zebra DS2278 acts as a USB HID keyboard: it "types" the code very fast
   // and finishes with Enter. We listen globally so scanning works in every mode
-  // without focusing an input first.
+  // without focusing an input first. Scanners configured without an Enter/Tab
+  // suffix are handled too: a burst of scanner-speed keystrokes is committed
+  // after a short idle timeout.
   const Scanner = (() => {
     const SCANNER_MAX_GAP_MS = 60;   // keystroke gap that is "too fast for a human"
     const IDLE_RESET_MS = 1000;
+    const BURST_COMMIT_MS = 250;     // idle time after which a suffix-less scan is committed
+    const MIN_BURST_LENGTH = 4;
     let buffer = "";
     let gaps = [];
     let last = 0;
+    let commitTimer = null;
     let handler = () => {};
 
     const sink = $("#scan-sink");
@@ -124,7 +129,28 @@
       return el.tagName === "INPUT" && !nonTextTypes.has(el.type);
     }
 
-    function reset() { buffer = ""; gaps = []; }
+    function reset() {
+      buffer = "";
+      gaps = [];
+      if (commitTimer) { clearTimeout(commitTimer); commitTimer = null; }
+    }
+
+    function isScannerBurst() { return gaps.length >= 2 && gaps.every((g) => g < SCANNER_MAX_GAP_MS); }
+
+    // Fallback for scanners that send no Enter/Tab suffix: commit the buffer once
+    // the keystrokes stop, but only when they arrived at scanner speed, so a
+    // human typing (who may still press Enter) keeps the buffer.
+    function commitBurst(target, editable) {
+      commitTimer = null;
+      const code = buffer.trim();
+      if (code.length < MIN_BURST_LENGTH || !isScannerBurst()) return;
+      reset();
+      if (editable && typeof target.value === "string" && target.value.endsWith(code)) {
+        target.value = target.value.slice(0, -code.length);
+        target.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+      handler(code);
+    }
 
     document.addEventListener("keydown", (e) => {
       if (e.ctrlKey || e.altKey || e.metaKey) return;
@@ -136,7 +162,7 @@
 
       if (e.key === "Enter" || e.key === "Tab") {
         const code = buffer.trim();
-        const scannerSpeed = gaps.length >= 2 && gaps.every((g) => g < SCANNER_MAX_GAP_MS);
+        const scannerSpeed = isScannerBurst();
         reset();
         if (!code) return;
         if (editable) {
@@ -157,6 +183,8 @@
       if (gap > (editable ? SCANNER_MAX_GAP_MS : IDLE_RESET_MS)) reset();
       else if (buffer) gaps.push(gap);
       buffer += e.key;
+      if (commitTimer) clearTimeout(commitTimer);
+      commitTimer = setTimeout(() => commitBurst(target, editable), BURST_COMMIT_MS);
       if (!editable) e.preventDefault();
     }, true);
 
