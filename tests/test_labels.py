@@ -33,8 +33,15 @@ def test_barcode_too_long_raises():
 def test_format_expiry():
     assert format_expiry("2026-12-01") == "EXP: 2026-12-01"
     assert format_expiry("2026-12-01 00:00:00") == "EXP: 2026-12-01"
-    assert format_expiry("2999-12-31") == "EXP: NO EXPIRY"
-    assert format_expiry(None) == "EXP: NO EXPIRY"
+    assert format_expiry("2999-12-31") == ""
+    assert format_expiry(None) == ""
+
+
+def test_label_without_expiry_omits_expiry_line():
+    dated = render_label("Butter", "2026-12-01", "grcy:s:abc")
+    undated = render_label("Butter", None, "grcy:s:abc")
+    assert undated.width == dated.width == 696
+    assert undated.height < dated.height  # the EXP line is dropped entirely
 
 
 def test_render_label_dimensions_and_long_names():
@@ -90,3 +97,65 @@ def test_printer_status_missing_device(tmp_path):
     assert "not found" in status["detail"]
     (tmp_path / "lp0").write_bytes(b"")
     assert printer.status()["ok"] is True
+
+
+def test_printer_status_recovers_renumbered_device_node(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.printer.DEVICE_NODE_GLOB", str(tmp_path / "lp*"))
+    (tmp_path / "lp1").write_bytes(b"")
+    printer = LabelPrinter(Settings(_env_file=None, printer_identifier=f"file://{tmp_path}/lp0"))
+    assert printer.status()["ok"] is True
+    assert printer.identifier == f"file://{tmp_path}/lp1"
+
+
+def test_print_switches_to_renumbered_device_node(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.printer.DEVICE_NODE_GLOB", str(tmp_path / "lp*"))
+    (tmp_path / "lp1").write_bytes(b"")
+    sent = []
+
+    def fake_send(instructions, printer_identifier, backend_identifier, blocking):
+        sent.append(printer_identifier)
+        return {"outcome": "printed", "did_print": True, "printer_state": None}
+
+    monkeypatch.setattr("app.printer.send", fake_send)
+    printer = LabelPrinter(Settings(_env_file=None, printer_identifier=f"file://{tmp_path}/lp0"))
+    result = printer.print_image(render_label("Butter", None, "grcy:s:abc"))
+    assert result["did_print"] is True
+    assert sent == [f"file://{tmp_path}/lp1"]
+    assert printer.identifier == f"file://{tmp_path}/lp1"
+
+
+def test_print_retries_once_when_device_vanishes_mid_print(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.printer.DEVICE_NODE_GLOB", str(tmp_path / "lp*"))
+    lp0 = tmp_path / "lp0"
+    lp0.write_bytes(b"")
+    sent = []
+
+    def fake_send(instructions, printer_identifier, backend_identifier, blocking):
+        sent.append(printer_identifier)
+        if len(sent) == 1:
+            lp0.unlink()
+            (tmp_path / "lp1").write_bytes(b"")
+            raise FileNotFoundError(printer_identifier)
+        return {"outcome": "printed", "did_print": True, "printer_state": None}
+
+    monkeypatch.setattr("app.printer.send", fake_send)
+    printer = LabelPrinter(Settings(_env_file=None, printer_identifier=f"file://{lp0}"))
+    result = printer.print_image(render_label("Butter", None, "grcy:s:abc"))
+    assert result["did_print"] is True
+    assert sent == [f"file://{lp0}", f"file://{tmp_path}/lp1"]
+
+
+def test_print_does_not_retry_when_device_still_present(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.printer.DEVICE_NODE_GLOB", str(tmp_path / "lp*"))
+    (tmp_path / "lp0").write_bytes(b"")
+    sent = []
+
+    def fake_send(instructions, printer_identifier, backend_identifier, blocking):
+        sent.append(printer_identifier)
+        return {"outcome": "error", "did_print": False, "printer_state": {"errors": ["No media when printing"]}}
+
+    monkeypatch.setattr("app.printer.send", fake_send)
+    printer = LabelPrinter(Settings(_env_file=None, printer_identifier=f"file://{tmp_path}/lp0"))
+    with pytest.raises(PrinterError, match="No media"):
+        printer.print_image(render_label("Butter", None, "grcy:s:abc"))
+    assert len(sent) == 1

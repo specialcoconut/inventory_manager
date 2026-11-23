@@ -68,6 +68,10 @@ class InventoryService:
     def _product_summary(self, product: dict, groups: dict[int, str], locations: dict[int, str]) -> dict:
         major, sub = self._category_of(product, groups)
         location_id = _parse_location_id(product.get("location_id"))
+        # "Move to <location> when opened": Grocy's move_on_open + default consume location.
+        open_location_id = None
+        if str(product.get("move_on_open") or "0") == "1":
+            open_location_id = _parse_location_id(product.get("default_consume_location_id"))
         return {
             "id": int(product["id"]),
             "name": product.get("name", ""),
@@ -76,6 +80,8 @@ class InventoryService:
             "sub": sub,
             "location_id": location_id,
             "location_name": locations.get(location_id) if location_id is not None else None,
+            "open_location_id": open_location_id,
+            "open_location_name": locations.get(open_location_id) if open_location_id is not None else None,
             "default_best_before_days": int(product.get("default_best_before_days") or 0),
         }
 
@@ -347,6 +353,68 @@ class InventoryService:
         except NotFoundError:
             return {**entry, "location_id": location_id}
 
+    # --------------------------------------------------------------------- open
+    async def open_entry(self, stock_id: str) -> dict:
+        """Mark one unit of a stock entry as opened.
+
+        If the product is configured to move opened items (``move_on_open`` +
+        ``default_consume_location_id`` in Grocy), the opened unit – and only
+        that unit – ends up at that location; the rest stays where it is.
+        """
+        if not STOCK_ID_PATTERN.fullmatch(stock_id):
+            raise NotFoundError(f"No stock entry {stock_id} in Grocy (already consumed?)")
+        rows = [
+            r
+            for r in await self.grocy.get_objects("stock", [f"stock_id={stock_id}"])
+            if str(r.get("stock_id")) == stock_id and float(r.get("amount") or 0) > 0
+        ]
+        if not rows:
+            raise NotFoundError(f"No stock entry {stock_id} in Grocy (already consumed?)")
+        product_id = int(rows[0]["product_id"])
+        if all(str(r.get("open", "0")) == "1" for r in rows):
+            raise ConflictError("All items of this entry are already open")
+        product = await self._product_by_id(product_id)
+        opened_before = {int(r["id"]) for r in rows if str(r.get("open", "0")) == "1"}
+
+        await self.grocy.open_stock(product_id, 1, stock_id)
+
+        target = None
+        if str(product.get("move_on_open") or "0") == "1":
+            target = _parse_location_id(product.get("default_consume_location_id"))
+        rows_after = await self.grocy.get_objects("stock", [f"stock_id={stock_id}"])
+        opened_row = next(
+            (
+                r
+                for r in rows_after
+                if str(r.get("open", "0")) == "1" and int(r["id"]) not in opened_before and float(r.get("amount") or 0) > 0
+            ),
+            None,
+        )
+        if opened_row is not None and target is not None and _parse_location_id(opened_row.get("location_id")) != target:
+            # Grocy versions without move-on-open support leave the opened unit in
+            # place: edit just that row (it has its own id after the split).
+            await self.grocy.edit_stock_entry(
+                int(opened_row["id"]),
+                {
+                    "amount": float(opened_row.get("amount") or 1),
+                    "best_before_date": opened_row.get("best_before_date"),
+                    "purchased_date": opened_row.get("purchased_date"),
+                    "open": True,
+                    "location_id": target,
+                },
+            )
+            opened_row = {**opened_row, "location_id": target}
+        locations = _location_names(await self.grocy.locations())
+        loc_id = _parse_location_id(opened_row.get("location_id")) if opened_row else None
+        return {
+            "stock_id": stock_id,
+            "product_id": product_id,
+            "product_name": product.get("name", ""),
+            "moved": target is not None and loc_id == target,
+            "location_id": loc_id,
+            "location_name": locations.get(loc_id) if loc_id is not None else None,
+        }
+
     # ------------------------------------------------------------------ product
     async def create_product(
         self,
@@ -414,4 +482,18 @@ class InventoryService:
             if not any(int(g["id"]) == product_group_id for g in groups):
                 raise NotFoundError(f"Product group #{product_group_id} not found in Grocy")
         await self.grocy.update_object("products", int(product["id"]), {"product_group_id": product_group_id})
+        return await self._product_info(await self._product_by_id(product_id))
+
+    async def set_open_behavior(self, product_id: int, location_id: Optional[int]) -> dict:
+        """Configure whether opening one item of this product moves it to ``location_id``."""
+        product = await self._product_by_id(product_id)
+        if location_id is None:
+            await self.grocy.update_object("products", int(product["id"]), {"move_on_open": 0})
+        else:
+            locations = await self.grocy.locations()
+            if not any(int(loc["id"]) == location_id for loc in locations):
+                raise NotFoundError(f"Location #{location_id} not found in Grocy")
+            await self.grocy.update_object(
+                "products", int(product["id"]), {"move_on_open": 1, "default_consume_location_id": location_id}
+            )
         return await self._product_info(await self._product_by_id(product_id))

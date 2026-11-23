@@ -8,10 +8,14 @@ services:
     ports:
       - "${APP_PORT:-8080}:${APP_PORT:-8080}"
     devices:
-      # Brother QL-800 via the usblp kernel driver (PRINTER_BACKEND=linux_kernel)
-      - /dev/usb/lp0:/dev/usb/lp0
       # Raw USB bus for PRINTER_BACKEND=pyusb and USB status checks
       - /dev/bus/usb:/dev/bus/usb
+    volumes:
+      # Brother QL-800 via the usblp kernel driver (PRINTER_BACKEND=linux_kernel).
+      # The whole directory is mounted (not a single device node) so that the
+      # kiosk still sees the printer when the kernel renumbers it to
+      # /dev/usb/lp1 after a power cycle.
+      - /dev/usb:/dev/usb
     # Allow access to printers that are (re)plugged after the container started
     # (USB major 180 = usblp, 189 = raw USB devices).
     device_cgroup_rules:

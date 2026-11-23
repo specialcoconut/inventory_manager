@@ -67,6 +67,7 @@
       </div>
       <div class="chip-row" id="search-majors"></div>
       <div class="chip-row sub" id="search-subs"></div>
+      <div class="chip-row" id="search-locations"></div>
       <div class="scan-result hidden" id="search-result"></div>
       <div id="search-inventory">
         <div class="summary" id="inventory-summary">Loading inventory…</div>
@@ -125,6 +126,10 @@
             <button class="btn seg-btn" data-print-mode="oem">Use OEM barcode</button>
           </div>
         </div>
+        <div class="open-behavior">
+          <div class="label">When one is opened later (e.g. long-life milk)</div>
+          <div class="chip-row" id="open-behavior-chips"></div>
+        </div>
         <div class="quick-grid" id="expiry-quick">
           <button class="btn btn-quick" data-days="3">+3 Days</button>
           <button class="btn btn-quick" data-days="5">+5 Days</button>
@@ -148,6 +153,7 @@
           <dt>Stock ID</dt><dd id="ar-stock" class="mono"></dd>
           <dt>Label</dt><dd id="ar-print"></dd>        </dl>
         <div class="button-row">
+          <button class="btn btn-secondary" id="open-one-btn">Open one now</button>
           <button class="btn btn-secondary" id="reprint-btn">⎙ Reprint</button>
           <button class="btn btn-primary" id="add-same-btn">＋ Add another</button>
           <button class="btn btn-secondary" id="add-new-btn">New product</button>

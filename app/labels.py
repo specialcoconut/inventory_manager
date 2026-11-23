@@ -116,8 +116,9 @@ def render_barcode(data: str, width: int, height: int = BARCODE_HEIGHT) -> Image
 
 
 def format_expiry(best_before_date: Optional[str]) -> str:
+    """Expiry line for the label; empty when the item never expires (line is omitted)."""
     if not best_before_date or best_before_date.startswith(NEVER_EXPIRES):
-        return "EXP: NO EXPIRY"
+        return ""
     return f"EXP: {best_before_date[:10]}"
 
 
@@ -141,9 +142,10 @@ def render_label(
     bars = render_barcode(barcode_data, width)
 
     title_line_h = int(title_font.size * 1.15)
-    exp_h = int(exp_font.size * 1.2)
+    exp_h = int(exp_font.size * 1.2) if exp_text else 0
     hr_h = int(hr_font.size * 1.3)
-    height = MARGIN + title_line_h * len(title_lines) + 8 + exp_h + 16 + bars.height + 8 + hr_h + MARGIN
+    exp_block = exp_h + 16 if exp_text else 8
+    height = MARGIN + title_line_h * len(title_lines) + 8 + exp_block + bars.height + 8 + hr_h + MARGIN
 
     image = Image.new("L", (width, height), 255)
     draw = ImageDraw.Draw(image)
@@ -152,8 +154,11 @@ def render_label(
         draw.text((MARGIN, y), line, font=title_font, fill=0)
         y += title_line_h
     y += 8
-    draw.text((MARGIN, y), exp_text, font=exp_font, fill=0)
-    y += exp_h + 16
+    if exp_text:
+        draw.text((MARGIN, y), exp_text, font=exp_font, fill=0)
+        y += exp_h + 16
+    else:
+        y += 8
     image.paste(bars, (0, y))
     y += bars.height + 8
     hr_w = _text_width(draw, hr_text, hr_font)

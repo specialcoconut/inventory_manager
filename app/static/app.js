@@ -8,7 +8,7 @@
     config: { consume_countdown_seconds: 5, barcode_prefix: "grcy:s:", default_best_before_days: 7 },
     catalog: { categories: [], groups: [], products: [], locations: [] },
     inventory: [],
-    search: { major: null, sub: null, text: "" },
+    search: { major: null, sub: null, location: null, text: "" },
     add: { major: null, sub: null, product: null, expiry: null, qty: 1, labelMode: "individual", printMode: "print", lastResult: null },
     consume: { current: null, timer: null, endsAt: 0, lastShown: null },
     modalScanHandler: null,
@@ -108,7 +108,8 @@
   // and finishes with Enter. We listen globally so scanning works in every mode
   // without focusing an input first. Scanners configured without an Enter/Tab
   // suffix are handled too: a burst of scanner-speed keystrokes is committed
-  // after a short idle timeout.
+  // after a short idle timeout. Keystrokes in a real text field (manual date
+  // entry, product name, search…) are never treated as scanner input.
   const Scanner = (() => {
     const SCANNER_MAX_GAP_MS = 60;   // keystroke gap that is "too fast for a human"
     const IDLE_RESET_MS = 1000;
@@ -140,52 +141,37 @@
     // Fallback for scanners that send no Enter/Tab suffix: commit the buffer once
     // the keystrokes stop, but only when they arrived at scanner speed, so a
     // human typing (who may still press Enter) keeps the buffer.
-    function commitBurst(target, editable) {
+    function commitBurst() {
       commitTimer = null;
       const code = buffer.trim();
       if (code.length < MIN_BURST_LENGTH || !isScannerBurst()) return;
       reset();
-      if (editable && typeof target.value === "string" && target.value.endsWith(code)) {
-        target.value = target.value.slice(0, -code.length);
-        target.dispatchEvent(new Event("input", { bubbles: true }));
-      }
       handler(code);
     }
 
     document.addEventListener("keydown", (e) => {
       if (e.ctrlKey || e.altKey || e.metaKey) return;
+      // Typing in a text field is always manual entry (e.g. a date), never a scan.
+      if (isEditable(document.activeElement)) { reset(); return; }
       const now = performance.now();
       const gap = now - last;
       last = now;
-      const target = document.activeElement;
-      const editable = isEditable(target);
 
       if (e.key === "Enter" || e.key === "Tab") {
         const code = buffer.trim();
-        const scannerSpeed = isScannerBurst();
         reset();
         if (!code) return;
-        if (editable) {
-          // Only hijack Enter in a text field when the keystrokes came from the scanner.
-          if (code.length < 3 || !scannerSpeed) return;
-          e.preventDefault();
-          if (typeof target.value === "string" && target.value.endsWith(code)) {
-            target.value = target.value.slice(0, -code.length);
-            target.dispatchEvent(new Event("input", { bubbles: true }));
-          }
-        } else {
-          e.preventDefault();
-        }
+        e.preventDefault();
         handler(code);
         return;
       }
       if (e.key.length !== 1) return;
-      if (gap > (editable ? SCANNER_MAX_GAP_MS : IDLE_RESET_MS)) reset();
+      if (gap > IDLE_RESET_MS) reset();
       else if (buffer) gaps.push(gap);
       buffer += e.key;
       if (commitTimer) clearTimeout(commitTimer);
-      commitTimer = setTimeout(() => commitBurst(target, editable), BURST_COMMIT_MS);
-      if (!editable) e.preventDefault();
+      commitTimer = setTimeout(commitBurst, BURST_COMMIT_MS);
+      e.preventDefault();
     }, true);
 
     function refocus() {
@@ -460,20 +446,30 @@
   // ================================================================= SEARCH
   const Search = (() => {
     let stale = true;
+    let shownProductId = null;
     const input = $("#search-input");
     const resultBox = $("#search-result");
 
     function invalidate() { stale = true; if (state.mode === "search") refresh(); }
 
+    function refreshResult() {
+      // Keep the open product panel in sync (consumed/opened/moved entries).
+      if (resultBox.classList.contains("hidden") || !shownProductId) return;
+      api("GET", `/api/products/${shownProductId}/stock`)
+        .then((res) => renderResult(res, { silent: true }))
+        .catch(() => {});
+    }
+
     async function refresh() {
       renderFilters();
-      if (!stale) { renderList(); return; }
+      if (!stale) { renderList(); refreshResult(); return; }
       try {
         const [inv] = await Promise.all([api("GET", "/api/inventory"), loadCatalog()]);
         state.inventory = inv.items;
         stale = false;
         renderFilters();
         renderList();
+        refreshResult();
       } catch (e) {
         $("#inventory-summary").textContent = `Could not load inventory: ${e.message}`;
       }
@@ -482,16 +478,46 @@
     function renderFilters() {
       renderCategoryRows($("#search-majors"), $("#search-subs"), state.search, (major, sub) => {
         state.search.major = major; state.search.sub = sub;
+        shownProductId = null;
         resultBox.classList.add("hidden");
         renderFilters(); renderList();
       });
+      renderLocationFilter();
+    }
+
+    // Where a product's stock actually is (entries may have been moved), falling
+    // back to the product's default location.
+    function itemLocations(i) {
+      if (i.stock_locations && i.stock_locations.length) return i.stock_locations;
+      return i.location_name ? [i.location_name] : [];
+    }
+
+    function renderLocationFilter() {
+      const names = new Set();
+      state.inventory.forEach((i) => itemLocations(i).forEach((n) => names.add(n)));
+      if (state.search.location) names.add(state.search.location);
+      const box = $("#search-locations");
+      const pick = (name) => {
+        state.search.location = name;
+        shownProductId = null;
+        resultBox.classList.add("hidden");
+        renderLocationFilter(); renderList();
+      };
+      box.replaceChildren(
+        h("button", { class: `chip${state.search.location === null ? " active" : ""}`, onclick: () => pick(null) }, "All locations"),
+        ...[...names].sort((a, b) => a.localeCompare(b)).map((n) =>
+          h("button", { class: `chip${state.search.location === n ? " active" : ""}`, onclick: () => pick(n) }, `📍 ${n}`))
+      );
     }
 
     function renderList() {
       const text = state.search.text.trim().toLowerCase();
-      const items = state.inventory.filter((i) => matchesCategory(i, state.search) && (!text || i.name.toLowerCase().includes(text)));
+      const items = state.inventory.filter((i) =>
+        matchesCategory(i, state.search)
+        && (state.search.location === null || itemLocations(i).includes(state.search.location))
+        && (!text || i.name.toLowerCase().includes(text)));
       const totalAmount = items.reduce((s, i) => s + i.amount, 0);
-      const filtered = state.search.major !== null || text;
+      const filtered = state.search.major !== null || state.search.location !== null || text;
       $("#inventory-summary").replaceChildren(
         filtered ? "Showing " : "Total current inventory: ",
         h("strong", {}, `${items.length} product${items.length === 1 ? "" : "s"}`),
@@ -508,9 +534,10 @@
       ));
     }
 
-    function renderResult(res) {
+    function renderResult(res, opts = {}) {
       const p = res.product;
       const entries = res.entries;
+      shownProductId = p.id;
       const rows = entries.map((e) => {
         const highlight = res.stock_id && e.stock_id === res.stock_id;
         return h("li", { class: `entry ${expiryClass(e.best_before_date)}${highlight ? " highlight" : ""}` },
@@ -522,6 +549,8 @@
             h("span", { class: "mono muted" }, e.stock_id)),
           h("div", { class: "actions" },
             h("button", { class: "btn btn-danger", onclick: () => Consume.consumeCode(`${state.config.barcode_prefix}${e.stock_id}`) }, "Consume Now"),
+            !e.open ? h("button", { class: "btn btn-secondary", onclick: () => openOne(e.stock_id) },
+              p.open_location_name ? `Open 1 → ${p.open_location_name}` : "Open 1") : null,
             h("button", { class: "btn btn-secondary", onclick: () => reprint(e.stock_id) }, "⎙ Reprint Label"),
             h("button", { class: "btn btn-secondary", onclick: () => moveDialog(e, p) }, "Move Location")));
       });
@@ -530,11 +559,11 @@
           h("div", {}, h("h2", {}, p.name), h("div", { class: "muted" }, p.sub ? `${p.major} › ${p.sub}` : p.major)),
           h("div", { class: "header-actions" },
             h("button", { class: "btn btn-secondary", onclick: () => changeCategoryDialog(p) }, "✎ Category"),
-            h("button", { class: "btn btn-secondary", onclick: () => resultBox.classList.add("hidden") }, "✕ Close"))),
+            h("button", { class: "btn btn-secondary", onclick: () => { shownProductId = null; resultBox.classList.add("hidden"); } }, "✕ Close"))),
         entries.length ? h("ul", { class: "entries" }, rows) : h("p", { class: "big muted" }, "Not in stock")
       );
       resultBox.classList.remove("hidden");
-      resultBox.scrollIntoView({ behavior: "smooth", block: "start" });
+      if (!opts.silent) resultBox.scrollIntoView({ behavior: "smooth", block: "start" });
     }
 
     async function showProduct(productId) {
@@ -575,7 +604,7 @@
     async function scan(code) {
       try {
         const res = await api("GET", `/api/lookup?code=${encodeURIComponent(code)}`);
-        state.search.major = null; state.search.sub = null;
+        state.search.major = null; state.search.sub = null; state.search.location = null;
         renderFilters(); renderList();
         renderResult(res);
       } catch (e) {
@@ -615,6 +644,20 @@
       await api("POST", `/api/print/stock/${encodeURIComponent(stockId)}`);
       toast("Label sent to printer", "ok");
     } catch (e) { toast(`Print failed: ${e.message}`, "bad"); }
+  }
+
+  async function openOne(stockId) {
+    try {
+      const res = await api("POST", `/api/stock/${encodeURIComponent(stockId)}/open`);
+      toast(res.moved
+        ? `Opened 1 × ${res.product_name} → moved to ${res.location_name}`
+        : `Opened 1 × ${res.product_name}${res.location_name ? ` (kept in ${res.location_name})` : ""}`, "ok");
+      Search.invalidate();
+      return res;
+    } catch (e) {
+      toast(`Open failed: ${e.message}`, "bad");
+      return null;
+    }
   }
 
   // ==================================================================== ADD
@@ -677,6 +720,33 @@
       $("#add-print-btn").textContent = mode === "oem" ? "ADD TO GROCY" : "ADD & PRINT LABEL";
     }
 
+    // "When opened, move one to <location>" – stored on the Grocy product
+    // (move_on_open + default consume location), so it sticks for next time.
+    function renderOpenBehavior() {
+      const product = state.add.product;
+      const box = $("#open-behavior-chips");
+      if (!product) { box.replaceChildren(); return; }
+      const set = async (locationId) => {
+        try {
+          const updated = await api("POST", `/api/products/${product.id}/open-behavior`, { location_id: locationId });
+          Object.assign(product, updated);
+          const cat = state.catalog.products.find((x) => x.id === product.id);
+          if (cat) Object.assign(cat, updated);
+          renderOpenBehavior();
+          toast(updated.open_location_id === null
+            ? `${product.name}: opened items stay in place`
+            : `${product.name}: opened items move to ${updated.open_location_name}`, "info", { duration: 2500 });
+        } catch (e) { toast(e.message, "bad"); }
+      };
+      box.replaceChildren(
+        h("button", { class: `chip${product.open_location_id == null ? " active" : ""}`, onclick: () => set(null) }, "Stays in place"),
+        ...state.catalog.locations.map((loc) => h("button", {
+          class: `chip${product.open_location_id === loc.id ? " active" : ""}`,
+          onclick: () => set(loc.id),
+        }, `Move to ${loc.name}`))
+      );
+    }
+
     function selectProduct(product) {
       state.add.product = product;
       $("#add-product-name").textContent = product.name;
@@ -685,6 +755,7 @@
       setQty(1);
       setLabelMode("individual");
       setPrintMode("print");
+      renderOpenBehavior();
       showStep(2);
     }
 
@@ -858,6 +929,7 @@
     $("#change-product-btn").addEventListener("click", () => showStep(1));
     $("#new-product-btn").addEventListener("click", () => newProductDialog());
     $("#reprint-btn").addEventListener("click", () => state.add.lastResult && reprint(state.add.lastResult.stock_id));
+    $("#open-one-btn").addEventListener("click", () => state.add.lastResult && openOne(state.add.lastResult.stock_id));
     $("#add-same-btn").addEventListener("click", () => state.add.product && selectProduct(state.add.product));
     $("#add-new-btn").addEventListener("click", () => { state.add.product = null; showStep(1); render(); });
 

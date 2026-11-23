@@ -398,6 +398,80 @@ def test_move_entry_from_deleted_location_falls_back_to_edit(client, fake_grocy)
     assert put[2]["location_id"] == 2
 
 
+def test_set_open_behavior_persists_on_product(client, fake_grocy):
+    body = client.post("/api/products/11/open-behavior", json={"location_id": 1}).json()
+    assert body["open_location_id"] == 1 and body["open_location_name"] == "Fridge"
+    product = fake_grocy.product(11)
+    assert str(product["move_on_open"]) == "1" and product["default_consume_location_id"] == 1
+    # also exposed via the catalog so the kiosk can pre-select it
+    milk = next(p for p in client.get("/api/catalog").json()["products"] if p["id"] == 11)
+    assert milk["open_location_name"] == "Fridge"
+    # switch back to "stays in place"
+    body = client.post("/api/products/11/open-behavior", json={"location_id": None}).json()
+    assert body["open_location_id"] is None and body["open_location_name"] is None
+    assert str(fake_grocy.product(11)["move_on_open"]) == "0"
+
+
+def test_set_open_behavior_unknown_location(client):
+    assert client.post("/api/products/11/open-behavior", json={"location_id": 99}).status_code == 404
+
+
+def test_open_one_splits_entry_and_moves_only_that_unit(client, fake_grocy):
+    client.post("/api/products/11/open-behavior", json={"location_id": 1})
+    added = client.post("/api/stock/add", json={
+        "product_id": 11, "amount": 12, "best_before_date": "2027-05-01", "location_id": 3, "print_label": False,
+    }).json()
+    body = client.post(f"/api/stock/{added['stock_id']}/open").json()
+    assert body["moved"] is True
+    assert body["location_name"] == "Fridge"
+    rows = [e for e in fake_grocy.stock if e["stock_id"] == added["stock_id"]]
+    opened = [e for e in rows if e["open"]]
+    unopened = [e for e in rows if not e["open"]]
+    assert len(opened) == 1 and opened[0]["amount"] == 1 and opened[0]["location_id"] == 1
+    assert len(unopened) == 1 and unopened[0]["amount"] == 11 and unopened[0]["location_id"] == 3
+
+
+def test_open_without_behavior_keeps_location(client, fake_grocy):
+    added = client.post("/api/stock/add", json={
+        "product_id": 11, "amount": 2, "best_before_date": "2027-05-01", "location_id": 3, "print_label": False,
+    }).json()
+    body = client.post(f"/api/stock/{added['stock_id']}/open").json()
+    assert body["moved"] is False
+    assert body["location_name"] == "Pantry"
+    rows = [e for e in fake_grocy.stock if e["stock_id"] == added["stock_id"]]
+    assert all(e["location_id"] == 3 for e in rows)
+
+
+def test_open_moves_unit_even_when_grocy_cannot(client, fake_grocy):
+    # Old Grocy without native move-on-open: the kiosk moves the opened row itself.
+    fake_grocy.supports_move_on_open = False
+    client.post("/api/products/11/open-behavior", json={"location_id": 1})
+    added = client.post("/api/stock/add", json={
+        "product_id": 11, "amount": 3, "best_before_date": "2027-05-01", "location_id": 3, "print_label": False,
+    }).json()
+    body = client.post(f"/api/stock/{added['stock_id']}/open").json()
+    assert body["moved"] is True and body["location_name"] == "Fridge"
+    opened = next(e for e in fake_grocy.stock if e["stock_id"] == added["stock_id"] and e["open"])
+    assert opened["location_id"] == 1 and opened["amount"] == 1
+    put = next(req for req in fake_grocy.requests if req[0] == "PUT" and req[1].startswith("stock/entry/"))
+    assert put[2]["location_id"] == 1 and put[2]["open"] is True
+
+
+def test_open_last_unit_then_conflict(client, fake_grocy):
+    body = client.post("/api/stock/butter1/open").json()
+    assert body["moved"] is False
+    entry = next(e for e in fake_grocy.stock if e["stock_id"] == "butter1")
+    assert entry["open"] == 1 and entry["amount"] == 1  # no split for a single unit
+    r = client.post("/api/stock/butter1/open")
+    assert r.status_code == 409
+    assert "already open" in r.json()["detail"]
+
+
+def test_open_unknown_stock_id(client):
+    assert client.post("/api/stock/nope/open").status_code == 404
+    assert client.post("/api/stock/bad%20id!/open").status_code == 404
+
+
 def test_add_falls_back_to_first_location(client, fake_grocy):
     # No request location, no env default, and the product itself has none either.
     fake_grocy.product(13)["location_id"] = None

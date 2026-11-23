@@ -43,10 +43,16 @@ banner, a `5… 4… 3… 2… 1…` countdown and a large **UNDO / CANCEL** but
 * Shows the **total current inventory** (`GET /api/stock`), colour-coded by expiry.
 * **Two-tier category filter:** row 1 has major categories (`All`, `Dairy`, `Meat`, …).
   Tapping one opens row 2 with its subcategories (`All Dairy`, `Butter`, `Milk`, …).
+* **Location filter:** one chip per location that currently holds stock
+  (`All locations`, `📍 Fridge`, `📍 Pantry`, …), based on where entries actually are –
+  moved/opened items count at their new location.
 * An optional name filter has a ✕ clear button.
 * Scan a label or a manufacturer barcode, or tap a product, to see its stock entries
   (expiry, quantity, location). A scanned label's entry is highlighted. Each entry has
-  **Consume Now** (uses the undo countdown), **Reprint Label** and **Move Location**.
+  **Consume Now** (uses the undo countdown), **Open 1**, **Reprint Label** and
+  **Move Location** (moves the whole entry). **Open 1** marks a single unit as opened
+  and – if the product is set to move when opened – moves just that unit (e.g. one
+  long-life milk from the cupboard to the fridge); the rest stays put.
   The product header has **✎ Category** to recategorise a product that was entered
   incorrectly (`POST /api/products/{id}/category`).
 
@@ -63,15 +69,20 @@ banner, a `5… 4… 3… 2… 1…` countdown and a large **UNDO / CANCEL** but
    the product has none. Pick a **quantity**, whether labels are printed **1 per item**
    or **1 for the box**, and whether to print at all — **Use OEM barcode** skips the
    label and you consume by scanning the product's manufacturer barcode instead.
+   **When one is opened later** picks where a single opened unit should move
+   (e.g. *Move to Fridge* for long-life milk) or *Stays in place*. This is stored on
+   the Grocy product (`move_on_open` + default consume location), so it sticks.
 3. **ADD & PRINT LABEL.**
    * Calls `POST /api/stock/products/{id}/add` with `amount`, `best_before_date`
      and `location_id`.
    * Reads the new `stock_id` from the response.
    * Prints a 62 mm label with the product name in large bold text, `EXP: YYYY-MM-DD`
-     in bold, and a Code 128 barcode of `${BARCODE_PREFIX}${stock_id}`. The barcode has
-     quiet zones and the human-readable code printed below it.
+     in bold (omitted when the item has no expiry), and a Code 128 barcode of
+     `${BARCODE_PREFIX}${stock_id}`. The barcode has quiet zones and the
+     human-readable code printed below it.
    * A toast confirms the print and offers **Reprint**. If the printer fails, the stock
-     is still saved and you can reprint.
+     is still saved and you can reprint. The result screen also offers **Open one now**
+     to immediately open (and move) one of the items just added.
 
 ## Organising Grocy product groups for the category buttons
 
@@ -135,10 +146,10 @@ Labels printed by Grocy itself (`grcy:s:<stock_id>`, `grcy:p:<id>`,
 * Turn **Editor Lite off**. The green LED must be off, otherwise the printer acts as a
   USB drive and ignores raster data.
 * On the host, `ls /dev/usb/lp0` should show the device. `lsusb` shows `04f9:209b`.
-* `docker-compose.yml` passes in `/dev/usb/lp0` and `/dev/bus/usb`. It also adds
-  cgroup rules so a printer that is re-plugged keeps working. Docker refuses to start
-  the container if `/dev/usb/lp0` doesn't exist, so switch the printer on first.
-  Alternatively, remove that line and use `PRINTER_BACKEND=pyusb`.
+* `docker-compose.yml` mounts the whole `/dev/usb` directory and `/dev/bus/usb`, and
+  adds cgroup rules, so a printer that is power-cycled or re-plugged keeps working –
+  even when the kernel renumbers it (e.g. `/dev/usb/lp0` → `/dev/usb/lp1`). The kiosk
+  automatically switches to the new device node when the configured one disappears.
 
 ### 3. Scanner (Zebra DS2278)
 Use the default **USB HID keyboard** mode with an **Enter** suffix (factory default).
@@ -179,13 +190,15 @@ and print a test label.
 | `GET /api/products/{id}/stock` | Stock entries of a product |
 | `POST /api/products` | Create a product (+ optional barcode link, category, location) |
 | `POST /api/products/{id}/category` | Change a product's category (product group) |
+| `POST /api/products/{id}/open-behavior` | Set where one opened unit moves to (`location_id`, `null` = stays in place) |
 | `POST /api/categories` | Create a product group (category) |
 | `POST /api/locations` | Create a location |
 | `POST /api/consume` | Start a pending (undo-able) consumption for a scanned code |
 | `POST /api/consume/{id}/commit` | Commit now (countdown reached 0) |
 | `POST /api/consume/{id}/cancel` | Undo (409 if already removed) |
 | `POST /api/stock/add` | Add items and print labels (`label_mode`: `individual`/`box`, `print_label: false` for OEM-barcode mode) |
-| `POST /api/stock/{stock_id}/move` | Move a stock entry to another location |
+| `POST /api/stock/{stock_id}/move` | Move a stock entry (all of it) to another location |
+| `POST /api/stock/{stock_id}/open` | Open one unit; moves it per the product's open behavior |
 | `POST /api/print/stock/{stock_id}` | Reprint a label |
 
 ## Development

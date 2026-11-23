@@ -134,6 +134,12 @@ class GrocyClient:
             payload["stock_entry_id"] = stock_entry_id
         return await self._request("POST", f"stock/products/{int(product_id)}/consume", json=payload) or []
 
+    async def open_stock(self, product_id: int, amount: float = 1, stock_entry_id: Optional[str] = None) -> list[dict]:
+        payload: dict[str, Any] = {"amount": amount}
+        if stock_entry_id:
+            payload["stock_entry_id"] = stock_entry_id
+        return await self._request("POST", f"stock/products/{int(product_id)}/open", json=payload) or []
+
     async def transfer(
         self,
         product_id: int,

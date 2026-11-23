@@ -63,6 +63,11 @@ class SetCategoryRequest(BaseModel):
     product_group_id: Optional[int] = None
 
 
+class OpenBehaviorRequest(BaseModel):
+    # None = opened items stay where they are
+    location_id: Optional[int] = None
+
+
 def _resolved_to_dict(resolved: Resolved) -> dict:
     return {
         "kind": resolved.kind,
@@ -196,6 +201,10 @@ def create_app(
     async def set_product_category(product_id: int, body: SetCategoryRequest):
         return await service.set_product_category(product_id, body.product_group_id)
 
+    @app.post("/api/products/{product_id}/open-behavior")
+    async def set_open_behavior(product_id: int, body: OpenBehaviorRequest):
+        return await service.set_open_behavior(product_id, body.location_id)
+
     @app.post("/api/locations")
     async def create_location(body: CreateNamedRequest):
         return await service.create_location(body.name)
@@ -259,6 +268,10 @@ def create_app(
     @app.post("/api/stock/{stock_id}/move")
     async def move_stock(stock_id: str, body: MoveRequest):
         return await service.move(stock_id, body.location_id)
+
+    @app.post("/api/stock/{stock_id}/open")
+    async def open_stock(stock_id: str):
+        return await service.open_entry(stock_id)
 
     @app.post("/api/print/stock/{stock_id}")
     async def reprint(stock_id: str):

@@ -152,6 +152,9 @@ main { padding: 14px; max-width: 1400px; margin: 0 auto; }
 .seg-btn + .seg-btn { border-left: 3px solid #3a4450; }
 .seg-btn.active { background: var(--accent); }
 .seg-btn:disabled { opacity: .4; }
+.open-behavior { background: var(--panel); border-radius: var(--radius); padding: 16px 20px; margin: 12px 0; }
+.open-behavior > .label { margin-bottom: 10px; }
+.open-behavior .chip-row { margin-bottom: 0; }
 .lookup-hint { margin-top: 6px; font-size: 1rem; }
 .lookup-hint:empty { display: none; }
 .date-picker { display: flex; align-items: center; gap: 14px; margin-top: 14px; font-size: 1.2rem; color: var(--muted); }

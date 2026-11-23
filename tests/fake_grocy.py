@@ -36,6 +36,7 @@ class FakeGrocy:
         self.next_id = 100
         self.fail_consume: str | None = None
         self.v3 = False  # simulate an old Grocy without qu_id_consume / qu_id_price
+        self.supports_move_on_open = True  # Grocy >= 3.2 moves opened stock itself
         self.down = False  # simulate Grocy being unreachable
 
     @staticmethod
@@ -155,6 +156,35 @@ class FakeGrocy:
                 if entry["amount"] <= 0:
                     self.stock.remove(entry)
                 return self._json([{"stock_id": entry["stock_id"], "transaction_type": "consume"}])
+            if parts[:2] == ["stock", "products"] and parts[3] == "open":
+                product = self.product(parts[2])
+                if product is None:
+                    return self._error("Product does not exist")
+                entries = self.entries(product["id"])
+                if body.get("stock_entry_id"):
+                    entries = [e for e in entries if e["stock_id"] == body["stock_entry_id"]]
+                entries = sorted(
+                    (e for e in entries if not e["open"] and e["amount"] > 0), key=lambda e: e["best_before_date"]
+                )
+                if not entries:
+                    return self._error("Amount to be opened cannot be > current unopened stock amount")
+                entry = entries[0]
+                amount = body.get("amount", 1)
+                if entry["amount"] > amount:
+                    # Grocy splits the entry: the opened part becomes its own row with the same stock_id.
+                    entry["amount"] -= amount
+                    self.next_id += 1
+                    entry = {**entry, "id": self.next_id, "amount": amount, "open": 1}
+                    self.stock.append(entry)
+                else:
+                    entry["open"] = 1
+                if (
+                    self.supports_move_on_open
+                    and str(product.get("move_on_open") or 0) == "1"
+                    and product.get("default_consume_location_id")
+                ):
+                    entry["location_id"] = int(product["default_consume_location_id"])
+                return self._json([{"stock_id": entry["stock_id"], "transaction_type": "product-opened"}])
             if parts[:2] == ["stock", "products"] and parts[3] == "transfer":
                 from_id = body["location_id_from"]
                 if not any(int(loc["id"]) == int(from_id or 0) for loc in self.locations):
