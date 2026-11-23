@@ -5,7 +5,7 @@
   const NEVER = "2999-12-31";
   const state = {
     mode: "consume",
-    config: { consume_countdown_seconds: 5, barcode_prefix: "grcy:s:", default_best_before_days: 7 },
+    config: { consume_countdown_seconds: 5, barcode_prefix: "grcy:s:", default_best_before_days: 7, ui_idle_return_seconds: 300 },
     catalog: { categories: [], groups: [], products: [], locations: [] },
     inventory: [],
     search: { major: null, sub: null, location: null, text: "" },
@@ -209,6 +209,29 @@
     if (mode === "add") Add.render();
   }
   $$(".tab").forEach((t) => t.addEventListener("click", () => setMode(t.dataset.mode)));
+
+  // ------------------------------------------------------------ idle return
+  // After a few minutes without any interaction the kiosk goes back to the
+  // consume screen (the default state someone walking up to it expects).
+  const IdleReturn = (() => {
+    let timer = null;
+    function arm() {
+      if (timer) clearTimeout(timer);
+      timer = null;
+      const secs = state.config.ui_idle_return_seconds;
+      if (!secs || secs <= 0) return;
+      timer = setTimeout(() => {
+        timer = null;
+        if (state.mode !== "consume" || !$("#modal").classList.contains("hidden")) {
+          closeModal();
+          setMode("consume");
+        }
+      }, secs * 1000);
+    }
+    ["pointerdown", "keydown", "wheel", "touchstart"].forEach((ev) =>
+      document.addEventListener(ev, arm, { passive: true, capture: true }));
+    return { arm };
+  })();
 
   // ------------------------------------------------------------- modal
   function openModal(content, scanHandler = null) {
@@ -972,6 +995,7 @@
       state.config = await api("GET", "/api/config");
     } catch (_) { /* keep defaults */ }
     $$(".js-countdown-seconds").forEach((el) => { el.textContent = state.config.consume_countdown_seconds; });
+    IdleReturn.arm();
     await loadCatalog();
     checkHealth();
     setInterval(checkHealth, 30000);

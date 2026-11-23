@@ -154,6 +154,7 @@ def create_app(
             "default_best_before_days": settings.grocy_default_best_before_days,
             "default_location_id": settings.grocy_default_location_id,
             "category_delimiter": settings.category_delimiter,
+            "ui_idle_return_seconds": settings.ui_idle_return_seconds,
         }
 
     @app.get("/api/health")

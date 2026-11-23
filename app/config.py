@@ -44,6 +44,9 @@ class Settings(BaseSettings):
 
     # --- UX --------------------------------------------------------------------
     consume_countdown_seconds: int = Field(5, ge=1, le=60)
+    # Return the UI to the consume screen after this many seconds without any
+    # interaction (0 disables it).
+    ui_idle_return_seconds: int = Field(300, ge=0, le=3600)
 
     # --- Server ----------------------------------------------------------------
     app_port: int = 8080

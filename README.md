@@ -135,6 +135,7 @@ cp .env.example .env
 | `PRINTER_RED` | `false` | Set `true` for two-colour Black/Red rolls (DK-22251) |
 | `BARCODE_PREFIX` | `grcy:s:` | Labels encode `<prefix><stock_id>`, which native Grocy also understands |
 | `CONSUME_COUNTDOWN_SECONDS` | `5` | Undo window before an item is consumed (1–60) |
+| `UI_IDLE_RETURN_SECONDS` | `300` | Return to the CONSUME screen after this much inactivity (0 disables) |
 | `APP_PORT` | `8080` | HTTP port |
 
 Labels printed by Grocy itself (`grcy:s:<stock_id>`, `grcy:p:<id>`,

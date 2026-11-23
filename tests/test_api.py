@@ -10,6 +10,7 @@ def test_config_and_static_assets(client):
     cfg = client.get("/api/config").json()
     assert cfg["consume_countdown_seconds"] == 1
     assert cfg["barcode_prefix"] == "grcy:s:"
+    assert cfg["ui_idle_return_seconds"] == 300
     assert "CONSUME" in client.get("/").text
     manifest = client.get("/manifest.json")
     assert manifest.json()["display"] == "fullscreen"
