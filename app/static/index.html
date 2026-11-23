@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#111418">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Kitchen Inventory</title>
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" type="image/png" sizes="192x192" href="/static/icons/icon-192.png">
+  <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <!-- Off-screen sink that keeps keyboard focus inside the page so the
+       Zebra scanner (USB HID keyboard) works without tapping an input first.
+       inputmode="none" stops the on-screen keyboard from popping up. -->
+  <input id="scan-sink" type="text" inputmode="none" autocomplete="off" aria-hidden="true" tabindex="-1">
+
+  <header class="topbar">
+    <nav class="tabs" role="tablist">
+      <button class="tab active" data-mode="consume" role="tab">CONSUME</button>
+      <button class="tab" data-mode="search" role="tab">SEARCH</button>
+      <button class="tab" data-mode="add" role="tab">ADD</button>
+    </nav>
+    <button class="status" id="status-btn" title="System status">
+      <span class="dot" id="grocy-dot"></span><span class="status-label">Grocy</span>
+      <span class="dot" id="printer-dot"></span><span class="status-label">Printer</span>
+    </button>
+  </header>
+
+  <main>
+    <!-- ============================ CONSUME ============================ -->
+    <section class="view active" id="view-consume">
+      <div class="idle" id="consume-idle">
+        <div class="idle-icon">▮▯▮▮▯▮</div>
+        <h1>Scan an item to consume it</h1>
+        <p>You'll have <span class="js-countdown-seconds">5</span> seconds to undo.</p>
+      </div>
+      <div class="consume-card hidden" id="consume-card">
+        <div class="banner" id="consume-banner">Item consumed</div>
+        <div class="consume-body">
+          <div class="countdown" id="consume-countdown">
+            <div class="countdown-number" id="countdown-number">5</div>
+            <div class="countdown-bar"><div class="countdown-fill" id="countdown-fill"></div></div>
+          </div>
+          <dl class="item-details">
+            <dt>Product</dt><dd id="ci-name" class="big"></dd>
+            <dt>Expiry</dt><dd id="ci-expiry"></dd>
+            <dt>Location</dt><dd id="ci-location"></dd>
+            <dt>Stock ID</dt><dd id="ci-stock" class="mono"></dd>
+          </dl>
+        </div>
+        <button class="btn btn-undo" id="undo-btn">UNDO / CANCEL</button>
+      </div>
+      <h2 class="history-title">Recent</h2>
+      <ul class="history" id="consume-history"></ul>
+    </section>
+
+    <!-- ============================= SEARCH ============================ -->
+    <section class="view" id="view-search">
+      <div class="searchbar">
+        <input id="search-input" type="search" placeholder="Filter by name (optional)" autocomplete="off" enterkeyhint="search">
+        <button class="btn btn-clear" id="search-clear" aria-label="Clear">✕</button>
+      </div>
+      <div class="chip-row" id="search-majors"></div>
+      <div class="chip-row sub" id="search-subs"></div>
+      <div class="scan-result hidden" id="search-result"></div>
+      <div id="search-inventory">
+        <div class="summary" id="inventory-summary">Loading inventory…</div>
+        <ul class="inventory" id="inventory-list"></ul>
+      </div>
+    </section>
+
+    <!-- =============================== ADD ============================= -->
+    <section class="view" id="view-add">
+      <ol class="steps">
+        <li data-step="1" class="active">1 · Product</li>
+        <li data-step="2">2 · Expiry</li>
+        <li data-step="3">3 · Save &amp; Print</li>
+      </ol>
+
+      <div class="add-step" id="add-step-1">
+        <p class="hint">Scan a barcode, or pick a category and product below.</p>
+        <div class="chip-row" id="add-majors"></div>
+        <div class="chip-row sub" id="add-subs"></div>
+        <div class="product-grid" id="add-products"></div>
+        <button class="btn btn-secondary wide" id="new-product-btn">＋ New product</button>
+      </div>
+
+      <div class="add-step hidden" id="add-step-2">
+        <div class="selected-product">
+          <div>
+            <div class="label">Product</div>
+            <div class="big" id="add-product-name"></div>
+            <div class="muted" id="add-product-category"></div>
+          </div>
+          <button class="btn btn-secondary" id="change-product-btn">Change</button>
+        </div>
+        <div class="expiry-display">
+          <div class="label">Best before</div>
+          <div class="big" id="expiry-value"></div>
+        </div>
+        <div class="quick-grid" id="expiry-quick">
+          <button class="btn btn-quick" data-days="3">+3 Days</button>
+          <button class="btn btn-quick" data-days="5">+5 Days</button>
+          <button class="btn btn-quick" data-days="7">+1 Week</button>
+          <button class="btn btn-quick" data-days="14">+2 Weeks</button>
+          <button class="btn btn-quick" data-months="1">+1 Month</button>
+          <button class="btn btn-quick" data-months="3">+3 Months</button>
+          <button class="btn btn-quick" data-months="6">+6 Months</button>
+          <button class="btn btn-quick" data-none="1">No Expiry</button>
+        </div>
+        <label class="date-picker">Or pick a date <input type="date" id="expiry-date"></label>
+        <button class="btn btn-primary wide huge" id="add-print-btn">ADD &amp; PRINT LABEL</button>
+      </div>
+
+      <div class="add-result hidden" id="add-result">
+        <div class="banner ok">Added to Grocy</div>
+        <dl class="item-details">
+          <dt>Product</dt><dd id="ar-name" class="big"></dd>
+          <dt>Expiry</dt><dd id="ar-expiry"></dd>
+          <dt>Stock ID</dt><dd id="ar-stock" class="mono"></dd>
+          <dt>Label</dt><dd id="ar-print"></dd>
+        </dl>
+        <div class="button-row">
+          <button class="btn btn-secondary" id="reprint-btn">⎙ Reprint</button>
+          <button class="btn btn-primary" id="add-same-btn">＋ Add another</button>
+          <button class="btn btn-secondary" id="add-new-btn">New product</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div class="modal-backdrop hidden" id="modal"><div class="modal" id="modal-content"></div></div>
+  <div class="toasts" id="toasts"></div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

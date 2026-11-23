@@ -1,0 +1,1 @@
+"""Grocy kitchen inventory kiosk."""
