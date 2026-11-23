@@ -133,6 +133,24 @@ def test_second_scan_commits_first_immediately(client, fake_grocy):
     assert second["pending"]["status"] == "pending"
 
 
+def test_double_scan_of_same_label_keeps_single_pending(client, fake_grocy):
+    first = client.post("/api/consume", json={"code": "grcy:s:butter1"}).json()
+    again = client.post("/api/consume", json={"code": "grcy:s:butter1"}).json()
+    assert again["duplicate"] is True and again["committed_previous"] == []
+    assert again["pending"]["id"] == first["pending"]["id"]
+    assert client.post(f"/api/consume/{first['pending']['id']}/cancel").json()["status"] == "cancelled"
+    assert _consume_calls(fake_grocy) == []
+    assert "butter1" in [e["stock_id"] for e in fake_grocy.stock]
+
+
+def test_oem_rescan_when_last_unit_was_pending_reports_not_in_stock(client, fake_grocy):
+    assert client.post("/api/consume", json={"code": "grcy:s:chicken1"}).status_code == 200
+    # chicken1 is the only chicken entry: scanning again commits it, then finds nothing left
+    response = client.post("/api/consume", json={"code": "grcy:p:12"})
+    assert response.status_code == 409
+    assert len(_consume_calls(fake_grocy)) == 1
+
+
 def test_consume_oem_barcode_uses_fifo_without_stock_entry(client, fake_grocy):
     pending = client.post("/api/consume", json={"code": "4006040052555"}).json()["pending"]
     assert pending["item"]["best_before_date"] == "2030-01-05"  # next to expire is shown
@@ -234,6 +252,13 @@ def test_move_location(client, fake_grocy):
     assert r.json()["location_name"] == "Freezer"
     transfer = next(req for req in fake_grocy.requests if req[1].endswith("/transfer"))
     assert transfer[2] == {"amount": 1, "location_id_from": 1, "location_id_to": 2, "stock_entry_id": "butter1"}
+
+
+def test_move_location_moves_whole_entry(client, fake_grocy):
+    next(e for e in fake_grocy.stock if e["stock_id"] == "chicken1")["amount"] = 3
+    assert client.post("/api/stock/chicken1/move", json={"location_id": 3}).status_code == 200
+    transfer = next(req for req in fake_grocy.requests if req[1].endswith("/transfer"))
+    assert transfer[2]["amount"] == 3
 
 
 def test_create_product_with_barcode(client, fake_grocy):

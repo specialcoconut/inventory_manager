@@ -330,9 +330,17 @@
         state.consume.timer = setInterval(tick, 100);
         Search.invalidate();
       } catch (e) {
-        // A previous pending item (if any) was not affected by a failed lookup – keep counting.
-        if (state.consume.current) state.consume.timer = setInterval(tick, 100);
-        else {
+        // The server may have committed the previous pending item before this scan failed.
+        let resumed = false;
+        const cur = state.consume.current;
+        if (cur) {
+          try {
+            const p = await api("GET", `/api/consume/${cur.id}`);
+            if (p.status === "pending") { state.consume.timer = setInterval(tick, 100); resumed = true; }
+            else finish(p);
+          } catch (_) { state.consume.current = null; }
+        }
+        if (!resumed) {
           state.consume.lastShown = null;
           $("#consume-idle").classList.add("hidden");
           card.classList.remove("hidden");

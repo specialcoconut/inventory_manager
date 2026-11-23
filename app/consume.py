@@ -27,6 +27,7 @@ CANCELLED = "cancelled"
 FAILED = "failed"
 
 ConsumeFn = Callable[[int, Optional[str]], Awaitable[object]]
+PrepareFn = Callable[[], Awaitable[tuple[int, Optional[str], dict]]]
 
 
 class NotPendingError(Exception):
@@ -82,14 +83,28 @@ class ConsumeManager:
     def pending(self) -> list[PendingConsume]:
         return [p for p in self._items.values() if p.status == PENDING]
 
-    async def start(
-        self, product_id: int, stock_id: Optional[str], item: dict
-    ) -> tuple[PendingConsume, list[PendingConsume]]:
-        """Register a new pending consumption, committing any earlier ones first."""
+    async def start(self, prepare: PrepareFn) -> tuple[PendingConsume, list[PendingConsume], bool]:
+        """Register a new pending consumption, committing any earlier ones first.
+
+        ``prepare`` resolves the scan to ``(product_id, stock_id, item)`` and must raise if
+        nothing is in stock. It runs under the start lock: once before committing earlier
+        items (so a repeated scan of a label that is still counting down is recognised as
+        a duplicate instead of consuming it twice) and again after any commit, so stock is
+        re-checked against Grocy's updated state.
+
+        Returns ``(pending, committed_previous, duplicate)``.
+        """
         async with self._start_lock:
+            product_id, stock_id, item = await prepare()
+            if stock_id is not None:
+                for existing in self.pending():
+                    if existing.stock_id == stock_id:
+                        return existing, [], True
             committed = []
             for previous in self.pending():
                 committed.append(await self.commit(previous.id))
+            if committed:
+                product_id, stock_id, item = await prepare()
             self._prune()
             pending = PendingConsume(
                 id=uuid.uuid4().hex,
@@ -100,7 +115,7 @@ class ConsumeManager:
             )
             self._items[pending.id] = pending
             pending.timer = asyncio.create_task(self._safety_timer(pending))
-            return pending, committed
+            return pending, committed, False
 
     async def commit(self, pending_id: str) -> PendingConsume:
         pending = self._require(pending_id)

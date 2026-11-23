@@ -132,10 +132,15 @@ class GrocyClient:
         return await self._request("POST", f"stock/products/{int(product_id)}/consume", json=payload) or []
 
     async def transfer(
-        self, product_id: int, location_id_from: int, location_id_to: int, stock_entry_id: Optional[str] = None
+        self,
+        product_id: int,
+        location_id_from: int,
+        location_id_to: int,
+        stock_entry_id: Optional[str] = None,
+        amount: float = 1,
     ) -> list[dict]:
         payload: dict[str, Any] = {
-            "amount": 1,
+            "amount": amount,
             "location_id_from": location_id_from,
             "location_id_to": location_id_to,
         }

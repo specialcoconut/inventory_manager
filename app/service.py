@@ -285,7 +285,11 @@ class InventoryService:
         info, entry = await self.stock_entry(stock_id)
         if entry["location_id"] == location_id:
             return entry
-        await self.grocy.transfer(info["id"], entry["location_id"], location_id, stock_entry_id=stock_id)
+        # Move the whole entry (not just one unit) so it isn't split across locations.
+        amount = float(entry.get("amount") or 1)
+        await self.grocy.transfer(
+            info["id"], entry["location_id"], location_id, stock_entry_id=stock_id, amount=amount
+        )
         try:
             _, moved = await self.stock_entry(stock_id)
             return moved

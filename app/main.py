@@ -167,10 +167,10 @@ def create_app(
     @app.post("/api/consume")
     async def start_consume(body: ScanRequest, request: Request):
         consumer: ConsumeManager = request.app.state.consumer
-        product_id, stock_id, item = await service.prepare_consume(body.code)
-        pending, committed = await consumer.start(product_id, stock_id, item)
+        pending, committed, duplicate = await consumer.start(lambda: service.prepare_consume(body.code))
         return {
             "pending": pending.to_dict(),
+            "duplicate": duplicate,
             "committed_previous": [p.to_dict() for p in committed],
             "countdown_seconds": settings.consume_countdown_seconds,
         }
