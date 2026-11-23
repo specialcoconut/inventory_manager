@@ -37,6 +37,14 @@ def _location_names(locations: list[dict]) -> dict[int, str]:
     return {int(loc["id"]): loc.get("name", f"#{loc['id']}") for loc in locations}
 
 
+def _parse_location_id(value) -> Optional[int]:
+    """Grocy reports "no location" as null, '' or 0 depending on version/endpoint."""
+    if value in (None, ""):
+        return None
+    loc = int(value)
+    return loc if loc > 0 else None
+
+
 def _entry_sort_key(entry: dict):
     # Grocy's default consume order: opened first, then soonest due, then oldest purchase.
     return (
@@ -59,15 +67,15 @@ class InventoryService:
 
     def _product_summary(self, product: dict, groups: dict[int, str], locations: dict[int, str]) -> dict:
         major, sub = self._category_of(product, groups)
-        location_id = product.get("location_id")
+        location_id = _parse_location_id(product.get("location_id"))
         return {
             "id": int(product["id"]),
             "name": product.get("name", ""),
             "group_id": int(product["product_group_id"]) if product.get("product_group_id") not in (None, "") else None,
             "major": major,
             "sub": sub,
-            "location_id": int(location_id) if location_id not in (None, "") else None,
-            "location_name": locations.get(int(location_id)) if location_id not in (None, "") else None,
+            "location_id": location_id,
+            "location_name": locations.get(location_id) if location_id is not None else None,
             "default_best_before_days": int(product.get("default_best_before_days") or 0),
         }
 
@@ -139,7 +147,7 @@ class InventoryService:
             entries = await self.grocy.product_entries(product_id)
         result = []
         for entry in sorted(entries, key=_entry_sort_key):
-            loc_id = entry.get("location_id")
+            loc_id = _parse_location_id(entry.get("location_id"))
             result.append(
                 {
                     "stock_id": entry.get("stock_id"),
@@ -147,8 +155,8 @@ class InventoryService:
                     "best_before_date": entry.get("best_before_date"),
                     "purchased_date": entry.get("purchased_date"),
                     "open": str(entry.get("open", "0")) == "1",
-                    "location_id": int(loc_id) if loc_id not in (None, "") else None,
-                    "location_name": locations.get(int(loc_id)) if loc_id not in (None, "") else None,
+                    "location_id": loc_id,
+                    "location_name": locations.get(loc_id) if loc_id is not None else None,
                 }
             )
         return result
@@ -296,6 +304,22 @@ class InventoryService:
         }
 
     # --------------------------------------------------------------------- move
+    async def _set_entry_location(self, stock_id: str, location_id: int, amount: float) -> None:
+        """Edit the entry in place – used when Grocy cannot transfer it."""
+        raw = await self.grocy.stock_entry_by_stock_id(stock_id)
+        if raw is None:
+            raise NotFoundError(f"No stock entry {stock_id} in Grocy (already consumed?)")
+        await self.grocy.edit_stock_entry(
+            int(raw["id"]),
+            {
+                "amount": amount,
+                "best_before_date": raw.get("best_before_date"),
+                "purchased_date": raw.get("purchased_date"),
+                "open": str(raw.get("open", "0")) == "1",
+                "location_id": location_id,
+            },
+        )
+
     async def move(self, stock_id: str, location_id: int) -> dict:
         info, entry = await self.stock_entry(stock_id)
         if entry["location_id"] == location_id:
@@ -305,23 +329,18 @@ class InventoryService:
         if entry["location_id"] is None:
             # Grocy cannot transfer from "nowhere" (stock added while the product had
             # no location): edit the entry in place instead.
-            raw = await self.grocy.stock_entry_by_stock_id(stock_id)
-            if raw is None:
-                raise NotFoundError(f"No stock entry {stock_id} in Grocy (already consumed?)")
-            await self.grocy.edit_stock_entry(
-                int(raw["id"]),
-                {
-                    "amount": amount,
-                    "best_before_date": raw.get("best_before_date"),
-                    "purchased_date": raw.get("purchased_date"),
-                    "open": str(raw.get("open", "0")) == "1",
-                    "location_id": location_id,
-                },
-            )
+            await self._set_entry_location(stock_id, location_id, amount)
         else:
-            await self.grocy.transfer(
-                info["id"], entry["location_id"], location_id, stock_entry_id=stock_id, amount=amount
-            )
+            try:
+                await self.grocy.transfer(
+                    info["id"], entry["location_id"], location_id, stock_entry_id=stock_id, amount=amount
+                )
+            except GrocyError as exc:
+                # e.g. the entry's location was deleted in Grocy ("source location
+                # does not exist"): fall back to editing the entry in place.
+                if exc.status_code != 400:
+                    raise
+                await self._set_entry_location(stock_id, location_id, amount)
         try:
             _, moved = await self.stock_entry(stock_id)
             return moved

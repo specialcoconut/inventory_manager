@@ -372,6 +372,32 @@ def test_move_entry_without_location_edits_in_place(client, fake_grocy):
     assert not any(req[1].endswith("/transfer") for req in fake_grocy.requests)
 
 
+def test_move_entry_with_zero_location_edits_in_place(client, fake_grocy):
+    # Grocy sometimes reports "no location" as 0 instead of null.
+    entry = next(e for e in fake_grocy.stock if e["stock_id"] == "butter1")
+    entry["location_id"] = 0
+    lookup = client.get("/api/lookup", params={"code": "grcy:s:butter1"}).json()
+    hit = next(e for e in lookup["entries"] if e["stock_id"] == "butter1")
+    assert hit["location_id"] is None and hit["location_name"] is None
+    r = client.post("/api/stock/butter1/move", json={"location_id": 2})
+    assert r.status_code == 200, r.text
+    assert entry["location_id"] == 2
+    assert not any(req[1].endswith("/transfer") for req in fake_grocy.requests)
+
+
+def test_move_entry_from_deleted_location_falls_back_to_edit(client, fake_grocy):
+    # The entry's location was deleted in Grocy: transfer fails, so edit in place.
+    entry = next(e for e in fake_grocy.stock if e["stock_id"] == "butter1")
+    entry["location_id"] = 99
+    r = client.post("/api/stock/butter1/move", json={"location_id": 2})
+    assert r.status_code == 200, r.text
+    assert r.json()["location_id"] == 2
+    assert entry["location_id"] == 2
+    assert any(req[1].endswith("/transfer") for req in fake_grocy.requests)  # tried first
+    put = next(req for req in fake_grocy.requests if req[0] == "PUT" and req[1].startswith("stock/entry/"))
+    assert put[2]["location_id"] == 2
+
+
 def test_add_falls_back_to_first_location(client, fake_grocy):
     # No request location, no env default, and the product itself has none either.
     fake_grocy.product(13)["location_id"] = None

@@ -156,6 +156,9 @@ class FakeGrocy:
                     self.stock.remove(entry)
                 return self._json([{"stock_id": entry["stock_id"], "transaction_type": "consume"}])
             if parts[:2] == ["stock", "products"] and parts[3] == "transfer":
+                from_id = body["location_id_from"]
+                if not any(int(loc["id"]) == int(from_id or 0) for loc in self.locations):
+                    return self._error("Source location does not exist")
                 entry = next(e for e in self.stock if e["stock_id"] == body["stock_entry_id"])
                 entry["location_id"] = body["location_id_to"]
                 return self._json([{"stock_id": entry["stock_id"], "transaction_type": "transfer_to"}])
