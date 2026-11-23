@@ -277,6 +277,12 @@ class InventoryService:
             location_id = self.settings.grocy_default_location_id
         if location_id is None and product.get("location_id") not in (None, ""):
             location_id = int(product["location_id"])
+        if location_id is None:
+            # Last resort: without this Grocy creates the entry with no location at
+            # all, which can never be transferred ("source location doesn't exist").
+            locations = await self.grocy.locations()
+            if locations:
+                location_id = int(sorted(locations, key=lambda loc: int(loc["id"]))[0]["id"])
         rows = await self.grocy.add_stock(product_id, amount=amount, best_before_date=bbd, location_id=location_id)
         stock_id = next((r.get("stock_id") for r in rows if r.get("stock_id")), None)
         if not stock_id:
@@ -296,9 +302,26 @@ class InventoryService:
             return entry
         # Move the whole entry (not just one unit) so it isn't split across locations.
         amount = float(entry.get("amount") or 1)
-        await self.grocy.transfer(
-            info["id"], entry["location_id"], location_id, stock_entry_id=stock_id, amount=amount
-        )
+        if entry["location_id"] is None:
+            # Grocy cannot transfer from "nowhere" (stock added while the product had
+            # no location): edit the entry in place instead.
+            raw = await self.grocy.stock_entry_by_stock_id(stock_id)
+            if raw is None:
+                raise NotFoundError(f"No stock entry {stock_id} in Grocy (already consumed?)")
+            await self.grocy.edit_stock_entry(
+                int(raw["id"]),
+                {
+                    "amount": amount,
+                    "best_before_date": raw.get("best_before_date"),
+                    "purchased_date": raw.get("purchased_date"),
+                    "open": str(raw.get("open", "0")) == "1",
+                    "location_id": location_id,
+                },
+            )
+        else:
+            await self.grocy.transfer(
+                info["id"], entry["location_id"], location_id, stock_entry_id=stock_id, amount=amount
+            )
         try:
             _, moved = await self.stock_entry(stock_id)
             return moved
@@ -344,3 +367,32 @@ class InventoryService:
             await self.grocy.add_product_barcode(product_id, barcode)
         product = await self._product_by_id(product_id)
         return await self._product_info(product)
+
+    async def create_location(self, name: str) -> dict:
+        name = name.strip()
+        if not name:
+            raise ValueError("Location name is required")
+        existing = await self.grocy.locations()
+        if any((loc.get("name") or "").strip().lower() == name.lower() for loc in existing):
+            raise ConflictError(f"Location {name} already exists")
+        location_id = await self.grocy.create_object("locations", {"name": name})
+        return {"id": location_id, "name": name}
+
+    async def create_category(self, name: str) -> dict:
+        name = name.strip()
+        if not name:
+            raise ValueError("Category name is required")
+        existing = await self.grocy.product_groups()
+        if any((g.get("name") or "").strip().lower() == name.lower() for g in existing):
+            raise ConflictError(f"Category {name} already exists")
+        group_id = await self.grocy.create_object("product_groups", {"name": name})
+        return {"id": group_id, "name": name}
+
+    async def set_product_category(self, product_id: int, product_group_id: Optional[int]) -> dict:
+        product = await self._product_by_id(product_id)
+        if product_group_id is not None:
+            groups = await self.grocy.product_groups()
+            if not any(int(g["id"]) == product_group_id for g in groups):
+                raise NotFoundError(f"Product group #{product_group_id} not found in Grocy")
+        await self.grocy.update_object("products", int(product["id"]), {"product_group_id": product_group_id})
+        return await self._product_info(await self._product_by_id(product_id))

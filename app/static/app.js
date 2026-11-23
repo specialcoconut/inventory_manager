@@ -9,7 +9,7 @@
     catalog: { categories: [], groups: [], products: [], locations: [] },
     inventory: [],
     search: { major: null, sub: null, text: "" },
-    add: { major: null, sub: null, product: null, expiry: null, qty: 1, lastResult: null },
+    add: { major: null, sub: null, product: null, expiry: null, qty: 1, labelMode: "individual", printMode: "print", lastResult: null },
     consume: { current: null, timer: null, endsAt: 0, lastShown: null },
     modalScanHandler: null,
   };
@@ -270,6 +270,67 @@
     }
   }
 
+  function splitGroup(name) {
+    const delim = state.config.category_delimiter || "/";
+    const i = (name || "").indexOf(delim);
+    if (!name || !name.trim()) return { major: "Uncategorized", sub: null };
+    if (i < 0) return { major: name.trim(), sub: null };
+    return { major: name.slice(0, i).trim() || "Uncategorized", sub: name.slice(i + delim.length).trim() || null };
+  }
+
+  function groupsForMajor(major) {
+    return state.catalog.groups
+      .map((g) => ({ ...g, ...splitGroup(g.name) }))
+      .filter((g) => g.major === major)
+      .sort((a, b) => (a.sub || "").localeCompare(b.sub || ""));
+  }
+
+  // Majors + subcategory chip picker used by the new-product and change-category dialogs.
+  function renderGroupPicker(majorsEl, groupsEl, sel, extraChips = []) {
+    function render() {
+      const majors = state.catalog.categories.filter((c) => c.group_ids.length);
+      majorsEl.replaceChildren(
+        h("button", { class: `chip${sel.major === null ? " active" : ""}`, onclick: () => { sel.major = null; sel.groupId = null; render(); } }, "No category"),
+        ...majors.map((c) => h("button", {
+          class: `chip${sel.major === c.name ? " active" : ""}`,
+          onclick: () => {
+            sel.major = c.name;
+            const groups = groupsForMajor(c.name);
+            sel.groupId = groups.length === 1 ? groups[0].id : null;
+            render();
+          },
+        }, c.name)),
+        ...extraChips);
+      if (sel.major === null) { groupsEl.replaceChildren(); return; }
+      groupsEl.replaceChildren(...groupsForMajor(sel.major).map((g) => h("button", {
+        class: `chip sub-chip${sel.groupId === g.id ? " active" : ""}`,
+        onclick: () => { sel.groupId = g.id; render(); },
+      }, g.sub || `${g.major} (general)`)));
+    }
+    render();
+    return render;
+  }
+
+  // Inline "type a name + Add" row used for creating categories/locations in dialogs.
+  function inlineAdder(placeholder, onCreate) {
+    const input = h("input", { type: "text", placeholder, autocomplete: "off" });
+    const addBtn = h("button", { class: "btn btn-primary" }, "Add");
+    const cancelBtn = h("button", { class: "btn btn-secondary", "aria-label": "Cancel" }, "✕");
+    const row = h("div", { class: "inline-add hidden" }, input, addBtn, cancelBtn);
+    function hide() { row.classList.add("hidden"); input.value = ""; }
+    addBtn.addEventListener("click", async () => {
+      const name = input.value.trim();
+      if (!name) { input.focus(); return; }
+      addBtn.disabled = true;
+      try { await onCreate(name); hide(); }
+      catch (e) { toast(e.message, "bad"); }
+      finally { addBtn.disabled = false; }
+    });
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); addBtn.click(); } });
+    cancelBtn.addEventListener("click", hide);
+    return { row, show: () => { row.classList.remove("hidden"); input.focus(); } };
+  }
+
   // ================================================================ CONSUME
   const Consume = (() => {
     const card = $("#consume-card");
@@ -467,7 +528,9 @@
       resultBox.replaceChildren(
         h("header", {},
           h("div", {}, h("h2", {}, p.name), h("div", { class: "muted" }, p.sub ? `${p.major} › ${p.sub}` : p.major)),
-          h("button", { class: "btn btn-secondary", onclick: () => resultBox.classList.add("hidden") }, "✕ Close")),
+          h("div", { class: "header-actions" },
+            h("button", { class: "btn btn-secondary", onclick: () => changeCategoryDialog(p) }, "✎ Category"),
+            h("button", { class: "btn btn-secondary", onclick: () => resultBox.classList.add("hidden") }, "✕ Close"))),
         entries.length ? h("ul", { class: "entries" }, rows) : h("p", { class: "big muted" }, "Not in stock")
       );
       resultBox.classList.remove("hidden");
@@ -477,6 +540,36 @@
     async function showProduct(productId) {
       try { renderResult(await api("GET", `/api/products/${productId}/stock`)); }
       catch (e) { toast(e.message, "bad"); }
+    }
+
+    function changeCategoryDialog(product) {
+      const sel = { major: null, groupId: product.group_id || null };
+      const current = state.catalog.groups.find((g) => g.id === sel.groupId);
+      if (current) sel.major = splitGroup(current.name).major;
+      const majorsEl = h("div", { class: "chip-row" });
+      const groupsEl = h("div", { class: "chip-row sub" });
+      const saveBtn = h("button", { class: "btn btn-primary" }, "Save");
+      renderGroupPicker(majorsEl, groupsEl, sel);
+      saveBtn.addEventListener("click", async () => {
+        if (sel.major !== null && sel.groupId === null) { toast("Pick a subcategory", "bad"); return; }
+        saveBtn.disabled = true;
+        try {
+          const updated = await api("POST", `/api/products/${product.id}/category`, { product_group_id: sel.groupId });
+          closeModal();
+          toast(`${updated.name} → ${updated.sub ? `${updated.major} › ${updated.sub}` : updated.major}`, "ok");
+          await loadCatalog();
+          invalidate();
+          Add.render();
+          renderResult(await api("GET", `/api/products/${product.id}/stock`));
+        } catch (e) {
+          toast(e.message, "bad");
+          saveBtn.disabled = false;
+        }
+      });
+      openModal(h("div", {},
+        h("h2", {}, `Category for ${product.name}`),
+        h("div", { class: "field" }, majorsEl, groupsEl),
+        h("div", { class: "button-row" }, h("button", { class: "btn btn-secondary", onclick: closeModal }, "Cancel"), saveBtn)));
     }
 
     async function scan(code) {
@@ -571,12 +664,27 @@
       $("#qty-minus").disabled = state.add.qty <= 1;
     }
 
+    function setLabelMode(mode) {
+      state.add.labelMode = mode;
+      $$("#label-mode-seg .seg-btn").forEach((b) => b.classList.toggle("active", b.dataset.labelMode === mode));
+    }
+
+    function setPrintMode(mode) {
+      state.add.printMode = mode;
+      $$("#print-mode-seg .seg-btn").forEach((b) => b.classList.toggle("active", b.dataset.printMode === mode));
+      // Label count is irrelevant when no label is printed.
+      $$("#label-mode-seg .seg-btn").forEach((b) => { b.disabled = mode === "oem"; });
+      $("#add-print-btn").textContent = mode === "oem" ? "ADD TO GROCY" : "ADD & PRINT LABEL";
+    }
+
     function selectProduct(product) {
       state.add.product = product;
       $("#add-product-name").textContent = product.name;
       $("#add-product-category").textContent = product.sub ? `${product.major} › ${product.sub}` : product.major;
       setExpiry(defaultExpiry(product));
       setQty(1);
+      setLabelMode("individual");
+      setPrintMode("print");
       showStep(2);
     }
 
@@ -592,7 +700,7 @@
     }
 
     function newProductDialog(barcode = null) {
-      const sel = { major: null, groupId: null };
+      const sel = { major: null, groupId: null, locationId: null };
       const nameInput = h("input", { type: "text", placeholder: "Product name", autocomplete: "off", enterkeyhint: "done" });
       const barcodeEl = h("div", { class: "big mono" }, barcode || "— (no barcode)");
       const lookupHint = h("div", { class: "muted lookup-hint" }, "");
@@ -621,32 +729,39 @@
         }
       }
 
-      function groupsForMajor(major) {
-        return state.catalog.groups
-          .map((g) => ({ ...g, ...splitGroup(g.name) }))
-          .filter((g) => g.major === major)
-          .sort((a, b) => (a.sub || "").localeCompare(b.sub || ""));
+      const renderCats = renderGroupPicker(majorsEl, groupsEl, sel, [
+        h("button", { class: "chip chip-add", onclick: () => catAdder.show() }, "＋ New…"),
+      ]);
+      const catAdder = inlineAdder(
+        `New category, e.g. Dairy${state.config.category_delimiter || "/"}Cheese`,
+        async (name) => {
+          const group = await api("POST", "/api/categories", { name });
+          await loadCatalog();
+          sel.major = splitGroup(name).major;
+          sel.groupId = group.id;
+          renderCats();
+          toast(`Created category ${name}`, "ok");
+        }
+      );
+
+      const locationsEl = h("div", { class: "chip-row" });
+      const locAdder = inlineAdder("New location name", async (name) => {
+        const loc = await api("POST", "/api/locations", { name });
+        await loadCatalog();
+        sel.locationId = loc.id;
+        renderLocs();
+        toast(`Created location ${name}`, "ok");
+      });
+      function renderLocs() {
+        locationsEl.replaceChildren(
+          h("button", { class: `chip${sel.locationId === null ? " active" : ""}`, onclick: () => { sel.locationId = null; renderLocs(); } }, "Default"),
+          ...state.catalog.locations.map((loc) => h("button", {
+            class: `chip${sel.locationId === loc.id ? " active" : ""}`,
+            onclick: () => { sel.locationId = loc.id; renderLocs(); },
+          }, loc.name)),
+          h("button", { class: "chip chip-add", onclick: () => locAdder.show() }, "＋ New…"));
       }
-      function renderCats() {
-        const majors = state.catalog.categories.filter((c) => c.group_ids.length);
-        majorsEl.replaceChildren(
-          h("button", { class: `chip${sel.major === null ? " active" : ""}`, onclick: () => { sel.major = null; sel.groupId = null; renderCats(); } }, "No category"),
-          ...majors.map((c) => h("button", {
-            class: `chip${sel.major === c.name ? " active" : ""}`,
-            onclick: () => {
-              sel.major = c.name;
-              const groups = groupsForMajor(c.name);
-              sel.groupId = groups.length === 1 ? groups[0].id : null;
-              renderCats();
-            },
-          }, c.name)));
-        if (sel.major === null) { groupsEl.replaceChildren(); return; }
-        groupsEl.replaceChildren(...groupsForMajor(sel.major).map((g) => h("button", {
-          class: `chip sub-chip${sel.groupId === g.id ? " active" : ""}`,
-          onclick: () => { sel.groupId = g.id; renderCats(); },
-        }, g.sub || `${g.major} (general)`)));
-      }
-      renderCats();
+      renderLocs();
 
       saveBtn.addEventListener("click", async () => {
         const name = nameInput.value.trim();
@@ -654,7 +769,7 @@
         if (sel.major !== null && sel.groupId === null) { toast("Pick a subcategory", "bad"); return; }
         saveBtn.disabled = true;
         try {
-          const product = await api("POST", "/api/products", { name, barcode, product_group_id: sel.groupId });
+          const product = await api("POST", "/api/products", { name, barcode, product_group_id: sel.groupId, location_id: sel.locationId });
           closeModal();
           toast(`Created ${product.name}`, "ok");
           await loadCatalog();
@@ -670,7 +785,8 @@
         h("h2", {}, barcode ? "Unknown barcode – create product" : "New product"),
         h("div", { class: "field" }, h("div", { class: "label" }, "Barcode"), barcodeEl, lookupHint),
         h("div", { class: "field" }, h("div", { class: "label" }, "Name"), nameInput),
-        h("div", { class: "field" }, h("div", { class: "label" }, "Category"), majorsEl, groupsEl),
+        h("div", { class: "field" }, h("div", { class: "label" }, "Category"), majorsEl, groupsEl, catAdder.row),
+        h("div", { class: "field" }, h("div", { class: "label" }, "Location"), locationsEl, locAdder.row),
         h("div", { class: "button-row" }, h("button", { class: "btn btn-secondary", onclick: closeModal }, "Cancel"), saveBtn)
       ), (code) => {
         barcode = code;
@@ -681,17 +797,10 @@
       setTimeout(() => nameInput.focus(), 50);
     }
 
-    function splitGroup(name) {
-      const delim = state.config.category_delimiter || "/";
-      const i = (name || "").indexOf(delim);
-      if (!name || !name.trim()) return { major: "Uncategorized", sub: null };
-      if (i < 0) return { major: name.trim(), sub: null };
-      return { major: name.slice(0, i).trim() || "Uncategorized", sub: name.slice(i + delim.length).trim() || null };
-    }
-
     async function addAndPrint() {
       const product = state.add.product;
       if (!product) return;
+      const printing = state.add.printMode !== "oem";
       const btn = $("#add-print-btn");
       btn.disabled = true;
       btn.textContent = "Saving…";
@@ -701,7 +810,8 @@
           amount: state.add.qty,
           best_before_date: state.add.expiry,
           no_expiry: state.add.expiry === null,
-          print_label: true,
+          print_label: printing,
+          label_mode: state.add.labelMode,
         });
         state.add.lastResult = res;
         $("#ar-name").textContent = res.product_name;
@@ -709,23 +819,28 @@
         $("#ar-expiry").textContent = fmtExpiry(res.best_before_date);
         $("#ar-stock").textContent = res.barcode;
         const pr = res.print;
-        $("#ar-print").textContent = pr && pr.ok
-          ? `Printed${pr.printed > 1 ? ` ×${pr.printed}` : ""} ✔`
-          : pr && pr.printed
-            ? `Printed ${pr.printed} of ${res.amount} – ${pr.error}`
-            : `Not printed – ${pr ? pr.error : "disabled"}`;
+        const expected = state.add.labelMode === "box" ? 1 : res.amount;
+        $("#ar-print").textContent = !printing
+          ? "None – using OEM barcode"
+          : pr && pr.ok
+            ? `Printed${pr.printed > 1 ? ` ×${pr.printed}` : ""} ✔`
+            : pr && pr.printed
+              ? `Printed ${pr.printed} of ${expected} – ${pr.error}`
+              : `Not printed – ${pr ? pr.error : "disabled"}`;
         showStep(3);
         Search.invalidate();
-        if (pr && pr.ok) {
+        if (!printing) {
+          toast(`Added ${qtyPrefix(res.amount)}${res.product_name} · consume by scanning its barcode`, "ok");
+        } else if (pr && pr.ok) {
           toast(`Added ${qtyPrefix(res.amount)}${res.product_name} · ${pr.printed > 1 ? `${pr.printed} labels` : "label"} printed`, "ok", { action: { label: "Reprint", run: () => reprint(res.stock_id) } });
         } else {
-          toast(`Added ${qtyPrefix(res.amount)}${res.product_name}, but ${pr && pr.printed ? `only ${pr.printed} of ${res.amount} labels printed` : "the label did not print"}`, "bad", { action: { label: "Retry print", run: () => reprint(res.stock_id) }, duration: 8000 });
+          toast(`Added ${qtyPrefix(res.amount)}${res.product_name}, but ${pr && pr.printed ? `only ${pr.printed} of ${expected} labels printed` : "the label did not print"}`, "bad", { action: { label: "Retry print", run: () => reprint(res.stock_id) }, duration: 8000 });
         }
       } catch (e) {
         toast(`Add failed: ${e.message}`, "bad");
       } finally {
         btn.disabled = false;
-        btn.textContent = "ADD & PRINT LABEL";
+        btn.textContent = state.add.printMode === "oem" ? "ADD TO GROCY" : "ADD & PRINT LABEL";
       }
     }
 
@@ -737,6 +852,8 @@
     dateInput.addEventListener("change", () => { if (dateInput.value) setExpiry(dateInput.value); });
     $("#qty-minus").addEventListener("click", () => setQty(state.add.qty - 1));
     $("#qty-plus").addEventListener("click", () => setQty(state.add.qty + 1));
+    $$("#label-mode-seg .seg-btn").forEach((b) => b.addEventListener("click", () => setLabelMode(b.dataset.labelMode)));
+    $$("#print-mode-seg .seg-btn").forEach((b) => b.addEventListener("click", () => setPrintMode(b.dataset.printMode)));
     $("#add-print-btn").addEventListener("click", addAndPrint);
     $("#change-product-btn").addEventListener("click", () => showStep(1));
     $("#new-product-btn").addEventListener("click", () => newProductDialog());

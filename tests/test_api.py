@@ -252,6 +252,57 @@ def test_add_rejects_bad_quantity(client):
     assert client.post("/api/stock/add", json={"product_id": 12, "amount": 1000}).status_code == 422
 
 
+def test_add_box_mode_prints_single_label(client, fake_grocy, printer):
+    body = client.post(
+        "/api/stock/add", json={"product_id": 12, "amount": 6, "label_mode": "box"}
+    ).json()
+    assert body["amount"] == 6
+    entry = next(e for e in fake_grocy.stock if e["stock_id"] == body["stock_id"])
+    assert entry["amount"] == 6
+    assert body["print"]["printed"] == 1
+    assert len(printer.images) == 1
+    assert client.post("/api/stock/add", json={"product_id": 12, "label_mode": "crate"}).status_code == 422
+
+
+def test_add_without_label_for_oem_barcode(client, fake_grocy, printer):
+    body = client.post("/api/stock/add", json={"product_id": 10, "amount": 2, "print_label": False}).json()
+    assert body["print"] is None
+    assert printer.images == []
+    assert next(e for e in fake_grocy.stock if e["stock_id"] == body["stock_id"])["amount"] == 2
+
+
+def test_create_location_and_category(client, fake_grocy):
+    loc = client.post("/api/locations", json={"name": "Garage Fridge"})
+    assert loc.status_code == 200, loc.text
+    assert any(l["name"] == "Garage Fridge" for l in fake_grocy.locations)
+    assert loc.json()["name"] == "Garage Fridge"
+    assert client.post("/api/locations", json={"name": " fridge "}).status_code == 409  # exists (case-insensitive)
+    assert client.post("/api/locations", json={"name": "  "}).status_code == 422
+
+    cat = client.post("/api/categories", json={"name": "Frozen/Veg"})
+    assert cat.status_code == 200, cat.text
+    assert any(g["name"] == "Frozen/Veg" for g in fake_grocy.product_groups)
+    assert client.post("/api/categories", json={"name": "dairy/milk"}).status_code == 409
+    # the new group is usable in the catalog tree
+    categories = client.get("/api/catalog").json()["categories"]
+    frozen = next(c for c in categories if c["name"] == "Frozen")
+    assert [s["name"] for s in frozen["subcategories"]] == ["Veg"]
+
+
+def test_change_product_category(client, fake_grocy):
+    r = client.post("/api/products/13/category", json={"product_group_id": 4})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert (body["major"], body["sub"]) == ("Long Life", "Sauces")
+    assert fake_grocy.product(13)["product_group_id"] == 4
+    put = next(req for req in fake_grocy.requests if req[0] == "PUT")
+    assert put[1] == "objects/products/13" and put[2] == {"product_group_id": 4}
+    # back to uncategorized
+    assert client.post("/api/products/13/category", json={"product_group_id": None}).json()["major"] == "Uncategorized"
+    assert client.post("/api/products/13/category", json={"product_group_id": 999}).status_code == 404
+    assert client.post("/api/products/999/category", json={"product_group_id": 1}).status_code == 404
+
+
 def test_external_product_lookup(client, fake_off):
     body = client.get("/api/external-product", params={"barcode": "7612345678900"}).json()
     assert body == {"found": True, "name": "Crunchy Peanut Butter", "brand": "Acme", "quantity": "500 g"}
@@ -307,6 +358,28 @@ def test_move_location_moves_whole_entry(client, fake_grocy):
     assert client.post("/api/stock/chicken1/move", json={"location_id": 3}).status_code == 200
     transfer = next(req for req in fake_grocy.requests if req[1].endswith("/transfer"))
     assert transfer[2]["amount"] == 3
+
+
+def test_move_entry_without_location_edits_in_place(client, fake_grocy):
+    entry = next(e for e in fake_grocy.stock if e["stock_id"] == "butter1")
+    entry["location_id"] = None
+    r = client.post("/api/stock/butter1/move", json={"location_id": 2})
+    assert r.status_code == 200, r.text
+    assert r.json()["location_id"] == 2
+    assert entry["location_id"] == 2
+    put = next(req for req in fake_grocy.requests if req[0] == "PUT" and req[1].startswith("stock/entry/"))
+    assert put[2]["location_id"] == 2 and put[2]["amount"] == 1
+    assert not any(req[1].endswith("/transfer") for req in fake_grocy.requests)
+
+
+def test_add_falls_back_to_first_location(client, fake_grocy):
+    # No request location, no env default, and the product itself has none either.
+    fake_grocy.product(13)["location_id"] = None
+    body = client.post("/api/stock/add", json={"product_id": 13}).json()
+    add_call = next(req for req in fake_grocy.requests if req[1] == "stock/products/13/add")
+    assert add_call[2]["location_id"] == 1
+    entry = next(e for e in fake_grocy.stock if e["stock_id"] == body["stock_id"])
+    assert entry["location_id"] == 1
 
 
 def test_create_product_with_barcode(client, fake_grocy):

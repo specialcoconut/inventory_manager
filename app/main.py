@@ -6,7 +6,7 @@ import datetime as dt
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
@@ -39,6 +39,8 @@ class AddStockRequest(BaseModel):
     no_expiry: bool = False
     location_id: Optional[int] = None
     print_label: bool = True
+    # individual = one label per item, box = a single label for the whole quantity
+    label_mode: Literal["individual", "box"] = "individual"
 
 
 class MoveRequest(BaseModel):
@@ -51,6 +53,14 @@ class CreateProductRequest(BaseModel):
     barcode: Optional[str] = Field(None, max_length=256)
     default_best_before_days: Optional[int] = None
     location_id: Optional[int] = None
+
+
+class CreateNamedRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=200)
+
+
+class SetCategoryRequest(BaseModel):
+    product_group_id: Optional[int] = None
 
 
 def _resolved_to_dict(resolved: Resolved) -> dict:
@@ -182,6 +192,18 @@ def create_app(
             body.name, body.product_group_id, body.barcode, body.default_best_before_days, body.location_id
         )
 
+    @app.post("/api/products/{product_id}/category")
+    async def set_product_category(product_id: int, body: SetCategoryRequest):
+        return await service.set_product_category(product_id, body.product_group_id)
+
+    @app.post("/api/locations")
+    async def create_location(body: CreateNamedRequest):
+        return await service.create_location(body.name)
+
+    @app.post("/api/categories")
+    async def create_category(body: CreateNamedRequest):
+        return await service.create_category(body.name)
+
     # ------------------------------------------------------------- consume
     @app.post("/api/consume")
     async def start_consume(body: ScanRequest, request: Request):
@@ -228,8 +250,9 @@ def create_app(
         )
         printed = None
         if body.print_label:
+            copies = body.amount if body.label_mode == "individual" else 1
             printed = await print_label(
-                added["product_name"], added["best_before_date"], added["stock_id"], copies=body.amount
+                added["product_name"], added["best_before_date"], added["stock_id"], copies=copies
             )
         return {**added, "barcode": f"{settings.barcode_prefix}{added['stock_id']}", "print": printed}
 

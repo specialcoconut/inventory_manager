@@ -73,6 +73,9 @@ class GrocyClient:
         result = await self._request("POST", f"objects/{entity}", json=payload)
         return int(result["created_object_id"])
 
+    async def update_object(self, entity: str, object_id: int, payload: dict) -> None:
+        await self._request("PUT", f"objects/{entity}/{int(object_id)}", json=payload)
+
     async def product_groups(self) -> list[dict]:
         return await self.get_objects("product_groups")
 
@@ -147,6 +150,9 @@ class GrocyClient:
         if stock_entry_id:
             payload["stock_entry_id"] = stock_entry_id
         return await self._request("POST", f"stock/products/{int(product_id)}/transfer", json=payload) or []
+
+    async def edit_stock_entry(self, entry_id: int, payload: dict) -> list[dict]:
+        return await self._request("PUT", f"stock/entry/{int(entry_id)}", json=payload) or []
 
     # ----------------------------------------------------------------- products
     async def create_product(

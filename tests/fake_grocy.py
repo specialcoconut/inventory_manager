@@ -172,6 +172,28 @@ class FakeGrocy:
                 if entity == "product_barcodes":
                     self.barcodes.append(body)
                     return self._json({"created_object_id": len(self.barcodes)})
+                if entity in ("locations", "product_groups"):
+                    store = self.locations if entity == "locations" else self.product_groups
+                    self.next_id += 1
+                    store.append({"id": self.next_id, **body})
+                    return self._json({"created_object_id": self.next_id})
+
+        if request.method == "PUT":
+            if parts[:2] == ["stock", "entry"] and len(parts) == 3:
+                entry = next((e for e in self.stock if str(e["id"]) == parts[2]), None)
+                if entry is None:
+                    return self._error("Stock entry does not exist")
+                entry.update({k: v for k, v in body.items()
+                              if k in ("amount", "best_before_date", "purchased_date", "location_id")})
+                if "open" in body:
+                    entry["open"] = 1 if body["open"] else 0
+                return self._json([{"id": entry["id"], "stock_id": entry["stock_id"]}])
+            if parts[0] == "objects" and parts[1] == "products" and len(parts) == 3:
+                product = self.product(parts[2])
+                if product is None:
+                    return self._error("Product does not exist", 404)
+                product.update(body)
+                return httpx.Response(204)
 
         return self._error(f"Unhandled {request.method} {path}", 404)
 

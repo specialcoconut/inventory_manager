@@ -47,18 +47,24 @@ banner, a `5… 4… 3… 2… 1…` countdown and a large **UNDO / CANCEL** but
 * Scan a label or a manufacturer barcode, or tap a product, to see its stock entries
   (expiry, quantity, location). A scanned label's entry is highlighted. Each entry has
   **Consume Now** (uses the undo countdown), **Reprint Label** and **Move Location**.
+  The product header has **✎ Category** to recategorise a product that was entered
+  incorrectly (`POST /api/products/{id}/category`).
 
 ### ADD
 1. **Product.** Scan a manufacturer barcode (`GET /api/stock/products/by-barcode/…`),
    or tap **Major → Subcategory → Product**. An unknown barcode opens a quick
-   *create product* dialog with category buttons. It calls `POST /api/objects/products`
-   and links the barcode with `POST /api/objects/product_barcodes`.
+   *create product* dialog with category and location buttons (each with a **＋ New…**
+   option that creates the Grocy product group / location in place). It calls
+   `POST /api/objects/products` and links the barcode with
+   `POST /api/objects/product_barcodes`.
 2. **Expiry.** Quick buttons: `+3 Days`, `+5 Days`, `+1 Week`, `+2 Weeks`, `+1 Month`,
    `+3 Months`, `+6 Months`, `No Expiry`. There is also a date picker. The pre-selected
    date is the product's *default due days*, or `GROCY_DEFAULT_BEST_BEFORE_DAYS` if
-   the product has none.
+   the product has none. Pick a **quantity**, whether labels are printed **1 per item**
+   or **1 for the box**, and whether to print at all — **Use OEM barcode** skips the
+   label and you consume by scanning the product's manufacturer barcode instead.
 3. **ADD & PRINT LABEL.**
-   * Calls `POST /api/stock/products/{id}/add` with `amount: 1`, `best_before_date`
+   * Calls `POST /api/stock/products/{id}/add` with `amount`, `best_before_date`
      and `location_id`.
    * Reads the new `stock_id` from the response.
    * Prints a 62 mm label with the product name in large bold text, `EXP: YYYY-MM-DD`
@@ -171,11 +177,14 @@ and print a test label.
 | `GET /api/inventory` | Current stock (per product) with categories |
 | `GET /api/lookup?code=` | Resolve a scan (stock label, raw stock id, Grocy product code, OEM barcode) |
 | `GET /api/products/{id}/stock` | Stock entries of a product |
-| `POST /api/products` | Create a product (+ optional barcode link) |
+| `POST /api/products` | Create a product (+ optional barcode link, category, location) |
+| `POST /api/products/{id}/category` | Change a product's category (product group) |
+| `POST /api/categories` | Create a product group (category) |
+| `POST /api/locations` | Create a location |
 | `POST /api/consume` | Start a pending (undo-able) consumption for a scanned code |
 | `POST /api/consume/{id}/commit` | Commit now (countdown reached 0) |
 | `POST /api/consume/{id}/cancel` | Undo (409 if already removed) |
-| `POST /api/stock/add` | Add one item and print its label |
+| `POST /api/stock/add` | Add items and print labels (`label_mode`: `individual`/`box`, `print_label: false` for OEM-barcode mode) |
 | `POST /api/stock/{stock_id}/move` | Move a stock entry to another location |
 | `POST /api/print/stock/{stock_id}` | Reprint a label |
 

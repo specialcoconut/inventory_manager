@@ -111,6 +111,20 @@
             <button class="btn btn-qty" id="qty-plus" aria-label="Increase quantity">＋</button>
           </div>
         </div>
+        <div class="qty-row">
+          <div class="label">Labels</div>
+          <div class="seg" id="label-mode-seg">
+            <button class="btn seg-btn active" data-label-mode="individual">1 per item</button>
+            <button class="btn seg-btn" data-label-mode="box">1 for the box</button>
+          </div>
+        </div>
+        <div class="qty-row">
+          <div class="label">Barcode</div>
+          <div class="seg" id="print-mode-seg">
+            <button class="btn seg-btn active" data-print-mode="print">Print label</button>
+            <button class="btn seg-btn" data-print-mode="oem">Use OEM barcode</button>
+          </div>
+        </div>
         <div class="quick-grid" id="expiry-quick">
           <button class="btn btn-quick" data-days="3">+3 Days</button>
           <button class="btn btn-quick" data-days="5">+5 Days</button>
@@ -132,8 +146,7 @@
           <dt>Quantity</dt><dd id="ar-qty"></dd>
           <dt>Expiry</dt><dd id="ar-expiry"></dd>
           <dt>Stock ID</dt><dd id="ar-stock" class="mono"></dd>
-          <dt>Label</dt><dd id="ar-print"></dd>
-        </dl>
+          <dt>Label</dt><dd id="ar-print"></dd>        </dl>
         <div class="button-row">
           <button class="btn btn-secondary" id="reprint-btn">⎙ Reprint</button>
           <button class="btn btn-primary" id="add-same-btn">＋ Add another</button>

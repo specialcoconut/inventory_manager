@@ -100,6 +100,9 @@ main { padding: 14px; max-width: 1400px; margin: 0 auto; }
   background: var(--panel); color: var(--text); font-size: 1.2rem; font-weight: 700; cursor: pointer; }
 .chip.sub-chip { min-height: 56px; background: var(--panel-2); }
 .chip.active { background: var(--accent); border-color: var(--accent); }
+.chip.chip-add { border-style: dashed; color: var(--muted); }
+.inline-add { display: flex; gap: 10px; margin-top: 10px; align-items: stretch; }
+.inline-add input { flex: 1; min-width: 0; }
 .summary { padding: 12px 4px; color: var(--muted); font-size: 1.1rem; }
 .summary strong { color: var(--text); font-size: 1.4rem; }
 .inventory { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 10px; }
@@ -113,6 +116,7 @@ main { padding: 14px; max-width: 1400px; margin: 0 auto; }
 
 .scan-result { background: var(--panel); border: 3px solid var(--accent); border-radius: 20px; padding: 18px; margin-bottom: 16px; }
 .scan-result header { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.scan-result .header-actions { display: flex; gap: 10px; flex-shrink: 0; }
 .scan-result h2 { margin: 0; font-size: 1.8rem; }
 .entries { list-style: none; margin: 14px 0 0; padding: 0; display: grid; gap: 10px; }
 .entry { padding: 14px; border-radius: 12px; background: var(--panel-2); border-left: 8px solid #3a4450; }
@@ -142,6 +146,12 @@ main { padding: 14px; max-width: 1400px; margin: 0 auto; }
 .qty-stepper { display: flex; align-items: center; gap: 18px; }
 .btn-qty { min-width: 96px; min-height: 84px; font-size: 2.2rem; background: var(--panel-2); border: 3px solid #3a4450; }
 .qty-value { min-width: 80px; text-align: center; font-size: 2.4rem; }
+.seg { display: flex; gap: 0; border-radius: var(--radius); overflow: hidden; border: 3px solid #3a4450; }
+.seg-btn { min-height: 72px; min-width: 150px; padding: 0 20px; font-size: 1.2rem; font-weight: 700;
+  background: var(--panel-2); border: 0; border-radius: 0; color: var(--text); }
+.seg-btn + .seg-btn { border-left: 3px solid #3a4450; }
+.seg-btn.active { background: var(--accent); }
+.seg-btn:disabled { opacity: .4; }
 .lookup-hint { margin-top: 6px; font-size: 1rem; }
 .lookup-hint:empty { display: none; }
 .date-picker { display: flex; align-items: center; gap: 14px; margin-top: 14px; font-size: 1.2rem; color: var(--muted); }
