@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     printer_identifier: str = "file:///dev/usb/lp0"
     printer_label_size: str = "62"
     printer_auto_cut: bool = True
+    printer_red: bool = False
 
     # --- Labels / scanning -----------------------------------------------------
     barcode_prefix: str = "grcy:s:"

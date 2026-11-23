@@ -115,6 +115,7 @@ cp .env.example .env
 | `PRINTER_IDENTIFIER` | `file:///dev/usb/lp0` | Use `usb://0x04f9:0x209b` with the `pyusb` backend |
 | `PRINTER_LABEL_SIZE` | `62` | Continuous roll width in mm (DK-22205 = `62`) |
 | `PRINTER_AUTO_CUT` | `true` | Cut after each label |
+| `PRINTER_RED` | `false` | Set `true` for two-colour Black/Red rolls (DK-22251) |
 | `BARCODE_PREFIX` | `grcy:s:` | Labels encode `<prefix><stock_id>`, which native Grocy also understands |
 | `CONSUME_COUNTDOWN_SECONDS` | `5` | Undo window before an item is consumed (1–60) |
 | `APP_PORT` | `8080` | HTTP port |

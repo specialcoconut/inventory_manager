@@ -35,6 +35,7 @@ class LabelPrinter:
         self.identifier = settings.printer_identifier
         self.label_size = settings.printer_label_size
         self.auto_cut = settings.printer_auto_cut
+        self.red = settings.printer_red
         self._lock = threading.Lock()
 
         label = next((lbl for lbl in LabelsManager().iter_elements() if lbl.identifier == self.label_size), None)
@@ -93,7 +94,7 @@ class LabelPrinter:
             threshold=70.0,
             dither=False,
             compress=False,
-            red=False,
+            red=self.red,
             dpi_600=False,
             hq=True,
             cut=self.auto_cut,
