@@ -9,7 +9,7 @@
     catalog: { categories: [], groups: [], products: [], locations: [] },
     inventory: [],
     search: { major: null, sub: null, text: "" },
-    add: { major: null, sub: null, product: null, expiry: null, lastResult: null },
+    add: { major: null, sub: null, product: null, expiry: null, qty: 1, lastResult: null },
     consume: { current: null, timer: null, endsAt: 0, lastShown: null },
     modalScanHandler: null,
   };
@@ -500,6 +500,8 @@
   const Add = (() => {
     const dateInput = $("#expiry-date");
 
+    function qtyPrefix(amount) { return amount > 1 ? `${fmtAmount(amount)}× ` : ""; }
+
     function showStep(step) {
       $("#add-step-1").classList.toggle("hidden", step !== 1);
       $("#add-step-2").classList.toggle("hidden", step !== 2);
@@ -535,11 +537,18 @@
       $$("#expiry-quick .btn").forEach((b) => b.classList.toggle("active", b === activeBtn));
     }
 
+    function setQty(value) {
+      state.add.qty = Math.min(999, Math.max(1, value));
+      $("#qty-value").textContent = String(state.add.qty);
+      $("#qty-minus").disabled = state.add.qty <= 1;
+    }
+
     function selectProduct(product) {
       state.add.product = product;
       $("#add-product-name").textContent = product.name;
       $("#add-product-category").textContent = product.sub ? `${product.major} › ${product.sub}` : product.major;
       setExpiry(defaultExpiry(product));
+      setQty(1);
       showStep(2);
     }
 
@@ -558,9 +567,31 @@
       const sel = { major: null, groupId: null };
       const nameInput = h("input", { type: "text", placeholder: "Product name", autocomplete: "off", enterkeyhint: "done" });
       const barcodeEl = h("div", { class: "big mono" }, barcode || "— (no barcode)");
+      const lookupHint = h("div", { class: "muted lookup-hint" }, "");
       const majorsEl = h("div", { class: "chip-row" });
       const groupsEl = h("div", { class: "chip-row sub" });
       const saveBtn = h("button", { class: "btn btn-primary" }, "Create product");
+      let prefilled = "";
+
+      async function prefillFromBarcode(code) {
+        if (!code) return;
+        lookupHint.textContent = "Looking up barcode…";
+        try {
+          const info = await api("GET", `/api/external-product?barcode=${encodeURIComponent(code)}`);
+          if (code !== barcode) return; // a newer scan replaced this barcode
+          if (!info.found) { lookupHint.textContent = "Barcode not in OpenFoodFacts – enter the name yourself."; return; }
+          const name = info.brand && !info.name.toLowerCase().includes(info.brand.toLowerCase())
+            ? `${info.brand} ${info.name}` : info.name;
+          // Don't clobber anything the user already typed.
+          if (!nameInput.value.trim() || nameInput.value === prefilled) {
+            nameInput.value = name;
+            prefilled = name;
+          }
+          lookupHint.textContent = `Found in OpenFoodFacts${info.quantity ? ` · ${info.quantity}` : ""} – check the name, then pick a category.`;
+        } catch (_) {
+          if (code === barcode) lookupHint.textContent = "Barcode lookup unavailable – enter the name yourself.";
+        }
+      }
 
       function groupsForMajor(major) {
         return state.catalog.groups
@@ -609,14 +640,16 @@
 
       openModal(h("div", {},
         h("h2", {}, barcode ? "Unknown barcode – create product" : "New product"),
-        h("div", { class: "field" }, h("div", { class: "label" }, "Barcode"), barcodeEl),
+        h("div", { class: "field" }, h("div", { class: "label" }, "Barcode"), barcodeEl, lookupHint),
         h("div", { class: "field" }, h("div", { class: "label" }, "Name"), nameInput),
         h("div", { class: "field" }, h("div", { class: "label" }, "Category"), majorsEl, groupsEl),
         h("div", { class: "button-row" }, h("button", { class: "btn btn-secondary", onclick: closeModal }, "Cancel"), saveBtn)
       ), (code) => {
         barcode = code;
         barcodeEl.textContent = code;
+        prefillFromBarcode(code);
       });
+      prefillFromBarcode(barcode);
       setTimeout(() => nameInput.focus(), 50);
     }
 
@@ -637,21 +670,28 @@
       try {
         const res = await api("POST", "/api/stock/add", {
           product_id: product.id,
+          amount: state.add.qty,
           best_before_date: state.add.expiry,
           no_expiry: state.add.expiry === null,
           print_label: true,
         });
         state.add.lastResult = res;
         $("#ar-name").textContent = res.product_name;
+        $("#ar-qty").textContent = fmtAmount(res.amount || 1);
         $("#ar-expiry").textContent = fmtExpiry(res.best_before_date);
         $("#ar-stock").textContent = res.barcode;
-        $("#ar-print").textContent = res.print && res.print.ok ? "Printed ✔" : `Not printed – ${res.print ? res.print.error : "disabled"}`;
+        const pr = res.print;
+        $("#ar-print").textContent = pr && pr.ok
+          ? `Printed${pr.printed > 1 ? ` ×${pr.printed}` : ""} ✔`
+          : pr && pr.printed
+            ? `Printed ${pr.printed} of ${res.amount} – ${pr.error}`
+            : `Not printed – ${pr ? pr.error : "disabled"}`;
         showStep(3);
         Search.invalidate();
-        if (res.print && res.print.ok) {
-          toast(`Added ${res.product_name} · label printed`, "ok", { action: { label: "Reprint", run: () => reprint(res.stock_id) } });
+        if (pr && pr.ok) {
+          toast(`Added ${qtyPrefix(res.amount)}${res.product_name} · ${pr.printed > 1 ? `${pr.printed} labels` : "label"} printed`, "ok", { action: { label: "Reprint", run: () => reprint(res.stock_id) } });
         } else {
-          toast(`Added ${res.product_name}, but the label did not print`, "bad", { action: { label: "Retry print", run: () => reprint(res.stock_id) }, duration: 8000 });
+          toast(`Added ${qtyPrefix(res.amount)}${res.product_name}, but ${pr && pr.printed ? `only ${pr.printed} of ${res.amount} labels printed` : "the label did not print"}`, "bad", { action: { label: "Retry print", run: () => reprint(res.stock_id) }, duration: 8000 });
         }
       } catch (e) {
         toast(`Add failed: ${e.message}`, "bad");
@@ -667,6 +707,8 @@
       else setExpiry(addDays(Number(b.dataset.days)), b);
     }));
     dateInput.addEventListener("change", () => { if (dateInput.value) setExpiry(dateInput.value); });
+    $("#qty-minus").addEventListener("click", () => setQty(state.add.qty - 1));
+    $("#qty-plus").addEventListener("click", () => setQty(state.add.qty + 1));
     $("#add-print-btn").addEventListener("click", addAndPrint);
     $("#change-product-btn").addEventListener("click", () => showStep(1));
     $("#new-product-btn").addEventListener("click", () => newProductDialog());

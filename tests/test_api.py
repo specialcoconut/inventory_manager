@@ -3,6 +3,8 @@ import time
 
 from PIL import Image
 
+from app.printer import PrinterError
+
 
 def test_config_and_static_assets(client):
     cfg = client.get("/api/config").json()
@@ -217,10 +219,56 @@ def test_add_invalid_date(client):
     assert r.status_code == 422
 
 
+def test_add_with_quantity_prints_label_per_item(client, fake_grocy, printer):
+    r = client.post("/api/stock/add", json={"product_id": 12, "amount": 6, "best_before_date": "2026-12-24"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["amount"] == 6
+    add_call = next(req for req in fake_grocy.requests if req[1] == "stock/products/12/add")
+    assert add_call[2]["amount"] == 6
+    entry = next(e for e in fake_grocy.stock if e["stock_id"] == body["stock_id"])
+    assert entry["amount"] == 6
+    assert body["print"] == {"ok": True, "printed": 6, "outcome": "printed", "did_print": True}
+    assert len(printer.images) == 6  # one label per item, all with the same barcode
+
+
+def test_add_quantity_reports_partial_print_failure(client, printer):
+    original = printer.print_image
+
+    def flaky(image):
+        if len(printer.images) >= 2:
+            raise PrinterError("No media")
+        return original(image)
+
+    printer.print_image = flaky
+    body = client.post("/api/stock/add", json={"product_id": 12, "amount": 5}).json()
+    assert body["print"]["ok"] is False
+    assert body["print"]["printed"] == 2
+    assert "No media" in body["print"]["error"]
+
+
+def test_add_rejects_bad_quantity(client):
+    assert client.post("/api/stock/add", json={"product_id": 12, "amount": 0}).status_code == 422
+    assert client.post("/api/stock/add", json={"product_id": 12, "amount": 1000}).status_code == 422
+
+
+def test_external_product_lookup(client, fake_off):
+    body = client.get("/api/external-product", params={"barcode": "7612345678900"}).json()
+    assert body == {"found": True, "name": "Crunchy Peanut Butter", "brand": "Acme", "quantity": "500 g"}
+    assert client.get("/api/external-product", params={"barcode": "0000000000"}).json() == {"found": False}
+    fake_off.down = True
+    assert client.get("/api/external-product", params={"barcode": "7612345678900"}).json() == {"found": False}
+
+
+def test_external_product_without_name_is_not_found(client, fake_off):
+    fake_off.products["123"] = {"product_name": "", "brands": "", "quantity": ""}
+    assert client.get("/api/external-product", params={"barcode": "123"}).json() == {"found": False}
+
+
 def test_add_still_succeeds_when_printer_fails(client, printer, fake_grocy):
     printer.fail = "/dev/usb/lp0 not found"
     body = client.post("/api/stock/add", json={"product_id": 10}).json()
-    assert body["print"] == {"ok": False, "error": "/dev/usb/lp0 not found"}
+    assert body["print"] == {"ok": False, "error": "/dev/usb/lp0 not found", "printed": 0}
     assert body["stock_id"] in [e["stock_id"] for e in fake_grocy.stock]
 
 

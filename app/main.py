@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 
 from .config import Settings, get_settings
 from .consume import ConsumeManager, NotPendingError
+from .external import ExternalProductLookup
 from .grocy import GrocyClient, GrocyError
 from .labels import LabelError, render_label
 from .printer import LabelPrinter, PrinterError
@@ -33,6 +34,7 @@ class ScanRequest(BaseModel):
 
 class AddStockRequest(BaseModel):
     product_id: int
+    amount: int = Field(1, ge=1, le=999)
     best_before_date: Optional[str] = None
     no_expiry: bool = False
     location_id: Optional[int] = None
@@ -64,11 +66,15 @@ def create_app(
     settings: Optional[Settings] = None,
     grocy: Optional[GrocyClient] = None,
     printer: Optional[LabelPrinter] = None,
+    external: Optional[ExternalProductLookup] = None,
 ) -> FastAPI:
     settings = settings or get_settings()
     owns_grocy = grocy is None
     grocy = grocy or GrocyClient(settings.grocy_api_base, settings.grocy_api_key, settings.grocy_timeout_seconds)
     printer = printer or LabelPrinter(settings)
+    owns_external = external is None and bool(settings.external_lookup_url)
+    if owns_external:
+        external = ExternalProductLookup(settings.external_lookup_url, settings.external_lookup_timeout_seconds)
     service = InventoryService(grocy, settings)
 
     @asynccontextmanager
@@ -80,6 +86,8 @@ def create_app(
             await app.state.consumer.shutdown()
             if owns_grocy:
                 await grocy.aclose()
+            if owns_external and external is not None:
+                await external.aclose()
 
     app = FastAPI(title="Grocy Kitchen Kiosk", version="1.0.0", lifespan=lifespan)
     app.state.settings = settings
@@ -105,18 +113,22 @@ def create_app(
         return JSONResponse({"detail": str(exc)}, status_code=422)
 
     # ---------------------------------------------------------------- printing
-    async def print_label(product_name: str, best_before_date: Optional[str], stock_id: str) -> dict:
+    async def print_label(product_name: str, best_before_date: Optional[str], stock_id: str, copies: int = 1) -> dict:
         data = f"{settings.barcode_prefix}{stock_id}"
+        printed = 0
         try:
             image = render_label(product_name, best_before_date, data, width=printer.width)
-            result = await run_in_threadpool(printer.print_image, image)
+            result: dict = {}
+            for _ in range(max(1, copies)):
+                result = await run_in_threadpool(printer.print_image, image)
+                printed += 1
         except (PrinterError, LabelError) as exc:
-            logger.warning("Label print failed for %s: %s", stock_id, exc)
-            return {"ok": False, "error": str(exc)}
+            logger.warning("Label print failed for %s after %d copies: %s", stock_id, printed, exc)
+            return {"ok": False, "error": str(exc), "printed": printed}
         except Exception as exc:  # never turn a successful stock add into an HTTP 500
             logger.exception("Unexpected error printing label for %s", stock_id)
-            return {"ok": False, "error": f"Printing failed: {exc.__class__.__name__}: {exc}"}
-        return {"ok": True, **result}
+            return {"ok": False, "error": f"Printing failed: {exc.__class__.__name__}: {exc}", "printed": printed}
+        return {"ok": True, "printed": printed, **result}
 
     # -------------------------------------------------------------------- API
     @app.get("/api/config")
@@ -156,6 +168,13 @@ def create_app(
     @app.get("/api/products/{product_id}/stock")
     async def product_stock(product_id: int):
         return _resolved_to_dict(await service.product_stock(product_id))
+
+    @app.get("/api/external-product")
+    async def external_product(barcode: str = Query(..., min_length=1, max_length=256)):
+        if external is None:
+            return {"found": False}
+        info = await external.lookup(barcode)
+        return {"found": info is not None, **(info or {})}
 
     @app.post("/api/products")
     async def create_product(body: CreateProductRequest):
@@ -204,10 +223,14 @@ def create_app(
     # ---------------------------------------------------------------- stock
     @app.post("/api/stock/add")
     async def add_stock(body: AddStockRequest):
-        added = await service.add_stock(body.product_id, body.best_before_date, body.no_expiry, body.location_id)
+        added = await service.add_stock(
+            body.product_id, body.best_before_date, body.no_expiry, body.location_id, body.amount
+        )
         printed = None
         if body.print_label:
-            printed = await print_label(added["product_name"], added["best_before_date"], added["stock_id"])
+            printed = await print_label(
+                added["product_name"], added["best_before_date"], added["stock_id"], copies=body.amount
+            )
         return {**added, "barcode": f"{settings.barcode_prefix}{added['stock_id']}", "print": printed}
 
     @app.post("/api/stock/{stock_id}/move")

@@ -36,6 +36,11 @@ class Settings(BaseSettings):
     # --- Labels / scanning -----------------------------------------------------
     barcode_prefix: str = "grcy:s:"
 
+    # --- External barcode lookup -------------------------------------------------
+    # Used to pre-fill product names for unknown barcodes. Empty string disables it.
+    external_lookup_url: str = "https://world.openfoodfacts.org"
+    external_lookup_timeout_seconds: float = 5.0
+
     # --- UX --------------------------------------------------------------------
     consume_countdown_seconds: int = Field(5, ge=1, le=60)
 

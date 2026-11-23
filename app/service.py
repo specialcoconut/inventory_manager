@@ -267,18 +267,27 @@ class InventoryService:
         best_before_date: Optional[str],
         no_expiry: bool,
         location_id: Optional[int],
+        amount: int = 1,
     ) -> dict:
+        if amount < 1:
+            raise ValueError("Amount must be at least 1")
         product = await self._product_by_id(product_id)
         bbd = self.best_before_for(product, best_before_date, no_expiry)
         if location_id is None:
             location_id = self.settings.grocy_default_location_id
         if location_id is None and product.get("location_id") not in (None, ""):
             location_id = int(product["location_id"])
-        rows = await self.grocy.add_stock(product_id, amount=1, best_before_date=bbd, location_id=location_id)
+        rows = await self.grocy.add_stock(product_id, amount=amount, best_before_date=bbd, location_id=location_id)
         stock_id = next((r.get("stock_id") for r in rows if r.get("stock_id")), None)
         if not stock_id:
             raise GrocyError("Grocy did not return a stock_id for the new stock entry")
-        return {"stock_id": stock_id, "product_id": int(product["id"]), "product_name": product["name"], "best_before_date": bbd}
+        return {
+            "stock_id": stock_id,
+            "product_id": int(product["id"]),
+            "product_name": product["name"],
+            "best_before_date": bbd,
+            "amount": amount,
+        }
 
     # --------------------------------------------------------------------- move
     async def move(self, stock_id: str, location_id: int) -> dict:

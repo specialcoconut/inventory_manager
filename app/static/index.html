@@ -103,6 +103,14 @@
           <div class="label">Best before</div>
           <div class="big" id="expiry-value"></div>
         </div>
+        <div class="qty-row">
+          <div class="label">Quantity</div>
+          <div class="qty-stepper">
+            <button class="btn btn-qty" id="qty-minus" aria-label="Decrease quantity">−</button>
+            <div class="qty-value big" id="qty-value">1</div>
+            <button class="btn btn-qty" id="qty-plus" aria-label="Increase quantity">＋</button>
+          </div>
+        </div>
         <div class="quick-grid" id="expiry-quick">
           <button class="btn btn-quick" data-days="3">+3 Days</button>
           <button class="btn btn-quick" data-days="5">+5 Days</button>
@@ -121,6 +129,7 @@
         <div class="banner ok">Added to Grocy</div>
         <dl class="item-details">
           <dt>Product</dt><dd id="ar-name" class="big"></dd>
+          <dt>Quantity</dt><dd id="ar-qty"></dd>
           <dt>Expiry</dt><dd id="ar-expiry"></dd>
           <dt>Stock ID</dt><dd id="ar-stock" class="mono"></dd>
           <dt>Label</dt><dd id="ar-print"></dd>

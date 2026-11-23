@@ -137,6 +137,13 @@ main { padding: 14px; max-width: 1400px; margin: 0 auto; }
 .quick-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
 .btn-quick { min-height: 84px; font-size: 1.35rem; background: var(--panel); border: 3px solid #3a4450; }
 .btn-quick.active { border-color: var(--ok); background: #183d22; }
+.qty-row { display: flex; justify-content: space-between; align-items: center; gap: 12px;
+  background: var(--panel); border-radius: var(--radius); padding: 16px 20px; margin: 12px 0; }
+.qty-stepper { display: flex; align-items: center; gap: 18px; }
+.btn-qty { min-width: 96px; min-height: 84px; font-size: 2.2rem; background: var(--panel-2); border: 3px solid #3a4450; }
+.qty-value { min-width: 80px; text-align: center; font-size: 2.4rem; }
+.lookup-hint { margin-top: 6px; font-size: 1rem; }
+.lookup-hint:empty { display: none; }
 .date-picker { display: flex; align-items: center; gap: 14px; margin-top: 14px; font-size: 1.2rem; color: var(--muted); }
 .date-picker input { min-height: 64px; padding: 0 16px; border-radius: var(--radius); border: 2px solid #3a4450;
   background: var(--panel); color: var(--text); font-size: 1.3rem; color-scheme: dark; }
