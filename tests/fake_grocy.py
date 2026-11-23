@@ -146,7 +146,8 @@ class FakeGrocy:
             if parts[:2] == ["stock", "products"] and parts[3] == "consume":
                 if self.fail_consume:
                     return self._error(self.fail_consume)
-                entries = sorted(self.entries(parts[2]), key=lambda e: e["best_before_date"])
+                # Grocy's default consume rule: opened first, then first due first.
+                entries = sorted(self.entries(parts[2]), key=lambda e: (-e["open"], e["best_before_date"]))
                 if body.get("stock_entry_id"):
                     entries = [e for e in entries if e["stock_id"] == body["stock_entry_id"]]
                 if not entries:

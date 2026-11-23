@@ -15,7 +15,7 @@
 }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); overflow-x: hidden;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; user-select: none; overscroll-behavior: none; }
 input, button { font: inherit; }
 .hidden { display: none !important; }
@@ -96,6 +96,10 @@ main { padding: 14px; max-width: 1400px; margin: 0 auto; }
 .chip-row { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 10px; }
 .chip-row.sub:empty { display: none; }
 .chip-row.sub { padding: 10px; background: var(--panel); border-radius: var(--radius); }
+/* Search filter rows: break out of the centred main column to use the full
+   screen width, with the chips centre-justified (also when wrapping). */
+.chip-row.filter-row { justify-content: center; width: 100vw; margin-left: calc(50% - 50vw);
+  padding-left: 14px; padding-right: 14px; border-radius: 0; }
 .chip { min-height: 64px; min-width: 110px; padding: 0 22px; border-radius: 999px; border: 3px solid #3a4450;
   background: var(--panel); color: var(--text); font-size: 1.2rem; font-weight: 700; cursor: pointer; }
 .chip.sub-chip { min-height: 56px; background: var(--panel-2); }

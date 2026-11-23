@@ -472,6 +472,26 @@ def test_open_unknown_stock_id(client):
     assert client.post("/api/stock/bad%20id!/open").status_code == 404
 
 
+def test_consume_after_open_takes_the_opened_unit_first(client, fake_grocy):
+    client.post("/api/products/11/open-behavior", json={"location_id": 1})
+    added = client.post("/api/stock/add", json={
+        "product_id": 11, "amount": 3, "best_before_date": "2027-05-01", "location_id": 3, "print_label": False,
+    }).json()
+    sid = added["stock_id"]
+    client.post(f"/api/stock/{sid}/open")
+    # Lookups list the opened fridge unit first (Grocy's consume order).
+    lookup = client.get("/api/lookup", params={"code": "grcy:p:11"}).json()
+    assert lookup["entries"][0]["open"] is True and lookup["entries"][0]["location_name"] == "Fridge"
+    # Scanning the shared label consumes the opened unit, not a sealed one.
+    pending = client.post("/api/consume", json={"code": f"grcy:s:{sid}"}).json()["pending"]
+    assert pending["item"]["location_name"] == "Fridge"
+    client.post(f"/api/consume/{pending['id']}/commit")
+    rows = [e for e in fake_grocy.stock if e["stock_id"] == sid]
+    assert all(not e["open"] for e in rows)  # the opened one is gone
+    assert sum(e["amount"] for e in rows) == 2  # sealed ones untouched, still in the pantry
+    assert all(e["location_id"] == 3 for e in rows)
+
+
 def test_add_falls_back_to_first_location(client, fake_grocy):
     # No request location, no env default, and the product itself has none either.
     fake_grocy.product(13)["location_id"] = None
