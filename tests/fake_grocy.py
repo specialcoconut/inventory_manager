@@ -26,6 +26,14 @@ class FakeGrocy:
             {"id": 11, "name": "Whole Milk", "product_group_id": 2, "location_id": 1, "default_best_before_days": 0},
             {"id": 12, "name": "Chicken Thighs", "product_group_id": 3, "location_id": 2, "default_best_before_days": 3},
             {"id": 13, "name": "Rice", "product_group_id": None, "location_id": 3, "default_best_before_days": -1},
+            {
+                "id": 14,
+                "name": "Passata",
+                "product_group_id": 4,  # Long Life/Sauces
+                "location_id": 3,
+                "default_best_before_days": 365,
+                "default_best_before_days_after_open": 5,
+            },
         ]
         self.barcodes = [{"product_id": 10, "barcode": "4006040052555"}]
         self.stock = [
@@ -34,6 +42,7 @@ class FakeGrocy:
             self._entry(12, "2029-12-01", 2, "chicken1"),
         ]
         self.next_id = 100
+        self.shopping_list: list[dict] = []
         self.fail_consume: str | None = None
         self.v3 = False  # simulate an old Grocy without qu_id_consume / qu_id_price
         self.supports_move_on_open = True  # Grocy >= 3.2 moves opened stock itself
@@ -132,6 +141,14 @@ class FakeGrocy:
                 return self._json(self.entries(parts[2]))
 
         if request.method == "POST":
+            if path == "stock/shoppinglist/add-missing-products":
+                for product in self.products:
+                    min_amount = float(product.get("min_stock_amount") or 0)
+                    have = sum(e["amount"] for e in self.entries(product["id"]))
+                    missing = min_amount - have
+                    if missing > 0 and not any(i["product_id"] == product["id"] for i in self.shopping_list):
+                        self.shopping_list.append({"product_id": product["id"], "amount": missing})
+                return httpx.Response(204)
             if parts[:2] == ["stock", "products"] and parts[3] == "add":
                 stock_id = uuid.uuid4().hex[:13]
                 product = self.product(parts[2])

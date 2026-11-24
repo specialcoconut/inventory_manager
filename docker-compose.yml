@@ -8,18 +8,16 @@ services:
     ports:
       - "${APP_PORT:-8080}:${APP_PORT:-8080}"
     volumes:
-      # Brother QL-800 via the usblp kernel driver (PRINTER_BACKEND=linux_kernel).
-      # The whole directory is bind-mounted (not passed via `devices:`) so the
-      # kiosk still sees the printer when the kernel renumbers it to
-      # /dev/usb/lp1 after a power cycle.
-      - /dev/usb:/dev/usb
-      # Raw USB bus for PRINTER_BACKEND=pyusb and USB status checks. Also a bind
-      # mount: USB devices get a new /dev/bus/usb address on every replug, and
-      # `devices:` only snapshots the nodes present at container start.
-      - /dev/bus/usb:/dev/bus/usb
+      # Mount the whole /dev directory, NOT /dev/usb or a single device node:
+      # when the printer is power cycled the kernel *deletes* /dev/usb (and the
+      # lp* node) and recreates it, so a /dev/usb bind mount goes stale and the
+      # container never sees the printer again until a restart. /dev itself is
+      # never recreated, so the kiosk always sees the current /dev/usb/lp* and
+      # /dev/bus/usb nodes, even after power cycles and replugs.
+      - /dev:/dev
     # Device access comes from these cgroup rules, not from `devices:` entries –
-    # they are required for the bind mounts above to be usable, and they cover
-    # printers (re)plugged after the container started.
+    # they are required for the /dev mount above to be usable, and they cover
+    # printers power cycled or (re)plugged after the container started.
     # (USB major 180 = usblp, 189 = raw USB devices.)
     device_cgroup_rules:
       - "c 180:* rmw"

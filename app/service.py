@@ -4,17 +4,25 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import logging
 import re
 from dataclasses import dataclass
 from typing import Optional
 
-from .categories import build_category_tree, split_group_name
+from .categories import build_category_tree, default_group_names, split_group_name
 from .config import Settings
 from .grocy import NEVER_EXPIRES, GrocyClient, GrocyError
 from .scanning import parse_scan
 
+logger = logging.getLogger(__name__)
 
 STOCK_ID_PATTERN = re.compile(r"[A-Za-z0-9_.-]{1,64}")
+
+# "Use by days after opened" for long-life items: allowed range and the default
+# used when a product hasn't been configured yet.
+USE_BY_DAYS_MIN = 3
+USE_BY_DAYS_MAX = 14
+USE_BY_DAYS_DEFAULT = 7
 
 
 class NotFoundError(Exception):
@@ -43,6 +51,19 @@ def _parse_location_id(value) -> Optional[int]:
         return None
     loc = int(value)
     return loc if loc > 0 else None
+
+
+def _is_long_life(major: Optional[str]) -> bool:
+    """Products in the "Long Life" major category get circle-a-day use-by labels."""
+    return bool(major) and re.sub(r"[^a-z0-9]", "", major.lower()) == "longlife"
+
+
+def _use_by_days_of(product: dict) -> Optional[int]:
+    try:
+        days = int(float(product.get("default_best_before_days_after_open") or 0))
+    except (TypeError, ValueError):
+        days = 0
+    return days if days > 0 else None
 
 
 def _entry_sort_key(entry: dict):
@@ -83,6 +104,9 @@ class InventoryService:
             "open_location_id": open_location_id,
             "open_location_name": locations.get(open_location_id) if open_location_id is not None else None,
             "default_best_before_days": int(product.get("default_best_before_days") or 0),
+            "long_life": _is_long_life(major),
+            "use_by_days_after_open": _use_by_days_of(product),
+            "min_stock_amount": float(product.get("min_stock_amount") or 0),
         }
 
     async def catalog(self) -> dict:
@@ -253,11 +277,29 @@ class InventoryService:
             "location_name": entry.get("location_name"),
             "stock_id": entry.get("stock_id"),
             "specific_entry": bool(resolved.stock_id),
+            "open": bool(entry.get("open")),
+            "long_life": resolved.product["long_life"],
+            "use_by_days_after_open": resolved.product["use_by_days_after_open"],
         }
         return resolved.product["id"], resolved.stock_id, item
 
     async def consume(self, product_id: int, stock_id: Optional[str]) -> None:
         await self.grocy.consume(product_id, amount=1, stock_entry_id=stock_id)
+        await self._restock_check(product_id)
+
+    async def _restock_check(self, product_id: int) -> None:
+        """Have Grocy put the product on the shopping list when it fell below its
+        minimum stock amount. Best effort – never fails the consume itself."""
+        try:
+            details = await self.grocy.product_details(product_id)
+            product = details.get("product") or {}
+            min_amount = float(product.get("min_stock_amount") or 0)
+            if min_amount <= 0:
+                return
+            if float(details.get("stock_amount") or 0) < min_amount:
+                await self.grocy.add_missing_products_to_shoppinglist()
+        except GrocyError as exc:
+            logger.warning("Shopping list check failed for product %s: %s", product_id, exc)
 
     # ---------------------------------------------------------------------- add
     def best_before_for(self, product: dict, requested: Optional[str], no_expiry: bool) -> str:
@@ -301,12 +343,15 @@ class InventoryService:
         stock_id = next((r.get("stock_id") for r in rows if r.get("stock_id")), None)
         if not stock_id:
             raise GrocyError("Grocy did not return a stock_id for the new stock entry")
+        groups = await self.grocy.product_groups()
+        major, _ = self._category_of(product, {int(g["id"]): g.get("name", "") for g in groups})
         return {
             "stock_id": stock_id,
             "product_id": int(product["id"]),
             "product_name": product["name"],
             "best_before_date": bbd,
             "amount": amount,
+            "long_life": _is_long_life(major),
         }
 
     # --------------------------------------------------------------------- move
@@ -360,6 +405,9 @@ class InventoryService:
         If the product is configured to move opened items (``move_on_open`` +
         ``default_consume_location_id`` in Grocy), the opened unit – and only
         that unit – ends up at that location; the rest stays where it is.
+
+        For long-life products the opened unit's due date is set to today plus
+        the product's "use by days after opened" (default 7 days).
         """
         if not STOCK_ID_PATTERN.fullmatch(stock_id):
             raise NotFoundError(f"No stock entry {stock_id} in Grocy (already consumed?)")
@@ -374,6 +422,9 @@ class InventoryService:
         if all(str(r.get("open", "0")) == "1" for r in rows):
             raise ConflictError("All items of this entry are already open")
         product = await self._product_by_id(product_id)
+        groups = await self.grocy.product_groups()
+        major, _ = self._category_of(product, {int(g["id"]): g.get("name", "") for g in groups})
+        long_life = _is_long_life(major)
         opened_before = {int(r["id"]) for r in rows if str(r.get("open", "0")) == "1"}
 
         await self.grocy.open_stock(product_id, 1, stock_id)
@@ -381,6 +432,11 @@ class InventoryService:
         target = None
         if str(product.get("move_on_open") or "0") == "1":
             target = _parse_location_id(product.get("default_consume_location_id"))
+        use_by_date = None
+        if long_life:
+            days = _use_by_days_of(product) or USE_BY_DAYS_DEFAULT
+            days = max(USE_BY_DAYS_MIN, min(USE_BY_DAYS_MAX, days))
+            use_by_date = (dt.date.today() + dt.timedelta(days=days)).isoformat()
         rows_after = await self.grocy.get_objects("stock", [f"stock_id={stock_id}"])
         opened_row = next(
             (
@@ -390,20 +446,25 @@ class InventoryService:
             ),
             None,
         )
-        if opened_row is not None and target is not None and _parse_location_id(opened_row.get("location_id")) != target:
-            # Grocy versions without move-on-open support leave the opened unit in
-            # place: edit just that row (it has its own id after the split).
-            await self.grocy.edit_stock_entry(
-                int(opened_row["id"]),
-                {
-                    "amount": float(opened_row.get("amount") or 1),
-                    "best_before_date": opened_row.get("best_before_date"),
-                    "purchased_date": opened_row.get("purchased_date"),
-                    "open": True,
-                    "location_id": target,
-                },
-            )
-            opened_row = {**opened_row, "location_id": target}
+        if opened_row is not None:
+            current_loc = _parse_location_id(opened_row.get("location_id"))
+            desired_loc = target if target is not None else current_loc
+            desired_bbd = use_by_date or opened_row.get("best_before_date")
+            if desired_loc != current_loc or (desired_bbd or "")[:10] != (opened_row.get("best_before_date") or "")[:10]:
+                # Grocy versions without move-on-open / due-days-after-open support
+                # leave the opened unit untouched: edit just that row (it has its
+                # own id after the split).
+                await self.grocy.edit_stock_entry(
+                    int(opened_row["id"]),
+                    {
+                        "amount": float(opened_row.get("amount") or 1),
+                        "best_before_date": desired_bbd,
+                        "purchased_date": opened_row.get("purchased_date"),
+                        "open": True,
+                        "location_id": desired_loc,
+                    },
+                )
+                opened_row = {**opened_row, "location_id": desired_loc, "best_before_date": desired_bbd}
         locations = _location_names(await self.grocy.locations())
         loc_id = _parse_location_id(opened_row.get("location_id")) if opened_row else None
         return {
@@ -413,6 +474,9 @@ class InventoryService:
             "moved": target is not None and loc_id == target,
             "location_id": loc_id,
             "location_name": locations.get(loc_id) if loc_id is not None else None,
+            "long_life": long_life,
+            "use_by_date": use_by_date if opened_row is not None else None,
+            "best_before_date": opened_row.get("best_before_date") if opened_row else None,
         }
 
     # ------------------------------------------------------------------ product
@@ -423,6 +487,7 @@ class InventoryService:
         barcode: Optional[str],
         default_best_before_days: Optional[int],
         location_id: Optional[int],
+        min_stock_amount: Optional[int] = None,
     ) -> dict:
         name = name.strip()
         if not name:
@@ -449,6 +514,7 @@ class InventoryService:
             qu_id=qu_id,
             product_group_id=product_group_id,
             default_best_before_days=default_best_before_days or 0,
+            min_stock_amount=min_stock_amount if min_stock_amount else None,
         )
         if barcode:
             await self.grocy.add_product_barcode(product_id, barcode)
@@ -475,6 +541,19 @@ class InventoryService:
         group_id = await self.grocy.create_object("product_groups", {"name": name})
         return {"id": group_id, "name": name}
 
+    async def seed_default_categories(self) -> dict:
+        """Create any missing groups from the suggested category tree (idempotent)."""
+        existing = await self.grocy.product_groups()
+        existing_names = {(g.get("name") or "").strip().lower() for g in existing}
+        created = []
+        names = default_group_names(self.settings.category_delimiter)
+        for name in names:
+            if name.lower() in existing_names:
+                continue
+            await self.grocy.create_object("product_groups", {"name": name})
+            created.append(name)
+        return {"created": created, "skipped": len(names) - len(created)}
+
     async def set_product_category(self, product_id: int, product_group_id: Optional[int]) -> dict:
         product = await self._product_by_id(product_id)
         if product_group_id is not None:
@@ -496,4 +575,24 @@ class InventoryService:
             await self.grocy.update_object(
                 "products", int(product["id"]), {"move_on_open": 1, "default_consume_location_id": location_id}
             )
+        return await self._product_info(await self._product_by_id(product_id))
+
+    async def set_min_stock(self, product_id: int, amount: int) -> dict:
+        """Set the minimum stock amount; Grocy puts the product on the shopping list below it."""
+        if amount < 0:
+            raise ValueError("Minimum stock amount cannot be negative")
+        product = await self._product_by_id(product_id)
+        await self.grocy.update_object("products", int(product["id"]), {"min_stock_amount": amount})
+        return await self._product_info(await self._product_by_id(product_id))
+
+    async def set_use_by_days(self, product_id: int, days: Optional[int]) -> dict:
+        """Set "use by days after opened" for long-life items (None resets to the default)."""
+        if days is not None and not (USE_BY_DAYS_MIN <= days <= USE_BY_DAYS_MAX):
+            raise ValueError(
+                f"Use by days after opened must be between {USE_BY_DAYS_MIN} and {USE_BY_DAYS_MAX}"
+            )
+        product = await self._product_by_id(product_id)
+        await self.grocy.update_object(
+            "products", int(product["id"]), {"default_best_before_days_after_open": days or 0}
+        )
         return await self._product_info(await self._product_by_id(product_id))

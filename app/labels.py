@@ -122,29 +122,59 @@ def format_expiry(best_before_date: Optional[str]) -> str:
     return f"EXP: {best_before_date[:10]}"
 
 
+def format_use_by(best_before_date: Optional[str]) -> str:
+    """Use-by line for opened long-life items."""
+    if not best_before_date or best_before_date.startswith(NEVER_EXPIRES):
+        return ""
+    return f"USE BY: {best_before_date[:10]}"
+
+
+WEEK_DAY_LETTERS = ("S", "M", "T", "W", "T", "F", "S")
+
+
+def _draw_week_row(draw: ImageDraw.ImageDraw, y: int, width: int, font) -> None:
+    """Draw ``Use by: S M T W T F S`` with the day letters spread out so one can
+    be circled with a pen when the item is opened."""
+    label = "Use by:"
+    draw.text((MARGIN, y), label, font=font, fill=0)
+    start = MARGIN + _text_width(draw, label, font) + 24
+    cell = (width - MARGIN - start) / len(WEEK_DAY_LETTERS)
+    for i, letter in enumerate(WEEK_DAY_LETTERS):
+        w = _text_width(draw, letter, font)
+        draw.text((start + i * cell + (cell - w) / 2, y), letter, font=font, fill=0)
+
+
 def render_label(
     product_name: str,
     best_before_date: Optional[str],
     barcode_data: str,
     human_readable: Optional[str] = None,
     width: int = DEFAULT_WIDTH,
+    variant: str = "expiry",
 ) -> Image.Image:
-    """Render a label for a continuous roll; height grows with the content."""
+    """Render a label for a continuous roll; height grows with the content.
+
+    ``variant`` selects the expiry area: ``"expiry"`` prints ``EXP: <date>``,
+    ``"week"`` (unopened long-life items) prints ``Use by: S M T W T F S`` so the
+    day can be circled on opening, and ``"use_by"`` (opened long-life items)
+    prints ``USE BY: <date>``.
+    """
     scratch = ImageDraw.Draw(Image.new("L", (1, 1), 255))
     inner = width - 2 * MARGIN
 
     title_font, title_lines = _fit_title(scratch, product_name.strip() or "?", inner)
     exp_font = _font(48, True)
     hr_font = _font(30, False)
-    exp_text = format_expiry(best_before_date)
+    week = variant == "week"
+    exp_text = "" if week else format_use_by(best_before_date) if variant == "use_by" else format_expiry(best_before_date)
     hr_text = human_readable if human_readable is not None else barcode_data
 
     bars = render_barcode(barcode_data, width)
 
     title_line_h = int(title_font.size * 1.15)
-    exp_h = int(exp_font.size * 1.2) if exp_text else 0
+    exp_h = int(exp_font.size * 1.2) if exp_text or week else 0
     hr_h = int(hr_font.size * 1.3)
-    exp_block = exp_h + 16 if exp_text else 8
+    exp_block = exp_h + 16 if exp_text or week else 8
     height = MARGIN + title_line_h * len(title_lines) + 8 + exp_block + bars.height + 8 + hr_h + MARGIN
 
     image = Image.new("L", (width, height), 255)
@@ -154,7 +184,10 @@ def render_label(
         draw.text((MARGIN, y), line, font=title_font, fill=0)
         y += title_line_h
     y += 8
-    if exp_text:
+    if week:
+        _draw_week_row(draw, y, width, exp_font)
+        y += exp_h + 16
+    elif exp_text:
         draw.text((MARGIN, y), exp_text, font=exp_font, fill=0)
         y += exp_h + 16
     else:

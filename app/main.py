@@ -30,6 +30,8 @@ STATIC_DIR = Path(__file__).parent / "static"
 # --------------------------------------------------------------------- schemas
 class ScanRequest(BaseModel):
     code: str = Field(..., min_length=1, max_length=256)
+    # "auto" asks consume-or-open for unopened long-life items; "consume" skips the question.
+    action: Literal["auto", "consume"] = "auto"
 
 
 class AddStockRequest(BaseModel):
@@ -53,6 +55,7 @@ class CreateProductRequest(BaseModel):
     barcode: Optional[str] = Field(None, max_length=256)
     default_best_before_days: Optional[int] = None
     location_id: Optional[int] = None
+    min_stock_amount: Optional[int] = Field(None, ge=0, le=999)
 
 
 class CreateNamedRequest(BaseModel):
@@ -66,6 +69,23 @@ class SetCategoryRequest(BaseModel):
 class OpenBehaviorRequest(BaseModel):
     # None = opened items stay where they are
     location_id: Optional[int] = None
+
+
+class MinStockRequest(BaseModel):
+    amount: int = Field(..., ge=0, le=999)
+
+
+class UseByDaysRequest(BaseModel):
+    # None = fall back to the default (7 days)
+    days: Optional[int] = Field(None, ge=3, le=14)
+
+
+class _OpenChoiceNeeded(Exception):
+    """A consume scan hit an unopened long-life item – the kiosk must ask first."""
+
+    def __init__(self, item: dict):
+        super().__init__("consume-or-open choice needed")
+        self.item = item
 
 
 def _resolved_to_dict(resolved: Resolved) -> dict:
@@ -128,11 +148,17 @@ def create_app(
         return JSONResponse({"detail": str(exc)}, status_code=422)
 
     # ---------------------------------------------------------------- printing
-    async def print_label(product_name: str, best_before_date: Optional[str], stock_id: str, copies: int = 1) -> dict:
+    async def print_label(
+        product_name: str,
+        best_before_date: Optional[str],
+        stock_id: str,
+        copies: int = 1,
+        variant: str = "expiry",
+    ) -> dict:
         data = f"{settings.barcode_prefix}{stock_id}"
         printed = 0
         try:
-            image = render_label(product_name, best_before_date, data, width=printer.width)
+            image = render_label(product_name, best_before_date, data, width=printer.width, variant=variant)
             result: dict = {}
             for _ in range(max(1, copies)):
                 result = await run_in_threadpool(printer.print_image, image)
@@ -195,7 +221,12 @@ def create_app(
     @app.post("/api/products")
     async def create_product(body: CreateProductRequest):
         return await service.create_product(
-            body.name, body.product_group_id, body.barcode, body.default_best_before_days, body.location_id
+            body.name,
+            body.product_group_id,
+            body.barcode,
+            body.default_best_before_days,
+            body.location_id,
+            body.min_stock_amount,
         )
 
     @app.post("/api/products/{product_id}/category")
@@ -206,6 +237,14 @@ def create_app(
     async def set_open_behavior(product_id: int, body: OpenBehaviorRequest):
         return await service.set_open_behavior(product_id, body.location_id)
 
+    @app.post("/api/products/{product_id}/min-stock")
+    async def set_min_stock(product_id: int, body: MinStockRequest):
+        return await service.set_min_stock(product_id, body.amount)
+
+    @app.post("/api/products/{product_id}/use-by-days")
+    async def set_use_by_days(product_id: int, body: UseByDaysRequest):
+        return await service.set_use_by_days(product_id, body.days)
+
     @app.post("/api/locations")
     async def create_location(body: CreateNamedRequest):
         return await service.create_location(body.name)
@@ -214,11 +253,27 @@ def create_app(
     async def create_category(body: CreateNamedRequest):
         return await service.create_category(body.name)
 
+    @app.post("/api/categories/seed-defaults")
+    async def seed_default_categories():
+        return await service.seed_default_categories()
+
     # ------------------------------------------------------------- consume
     @app.post("/api/consume")
     async def start_consume(body: ScanRequest, request: Request):
         consumer: ConsumeManager = request.app.state.consumer
-        pending, committed, duplicate = await consumer.start(lambda: service.prepare_consume(body.code))
+
+        async def prepare():
+            prepared = await service.prepare_consume(body.code)
+            item = prepared[2]
+            if body.action != "consume" and item.get("long_life") and not item.get("open"):
+                raise _OpenChoiceNeeded(item)
+            return prepared
+
+        try:
+            pending, committed, duplicate = await consumer.start(prepare)
+        except _OpenChoiceNeeded as exc:
+            # Unopened long-life item: the kiosk asks whether to consume or open it.
+            return {"choice_required": True, "item": exc.item}
         return {
             "pending": pending.to_dict(),
             "duplicate": duplicate,
@@ -262,7 +317,11 @@ def create_app(
         if body.print_label:
             copies = body.amount if body.label_mode == "individual" else 1
             printed = await print_label(
-                added["product_name"], added["best_before_date"], added["stock_id"], copies=copies
+                added["product_name"],
+                added["best_before_date"],
+                added["stock_id"],
+                copies=copies,
+                variant="week" if added.get("long_life") else "expiry",
             )
         return {**added, "barcode": f"{settings.barcode_prefix}{added['stock_id']}", "print": printed}
 
@@ -272,12 +331,23 @@ def create_app(
 
     @app.post("/api/stock/{stock_id}/open")
     async def open_stock(stock_id: str):
-        return await service.open_entry(stock_id)
+        result = await service.open_entry(stock_id)
+        printed = None
+        if result.get("long_life") and result.get("use_by_date"):
+            # New label with the actual use-by date, replacing the circle-a-day one.
+            printed = await print_label(
+                result["product_name"], result["use_by_date"], stock_id, variant="use_by"
+            )
+        return {**result, "print": printed}
 
     @app.post("/api/print/stock/{stock_id}")
     async def reprint(stock_id: str):
         product, entry = await service.stock_entry(stock_id)
-        result = await print_label(product["name"], entry["best_before_date"], stock_id)
+        if product["long_life"]:
+            variant = "use_by" if entry["open"] else "week"
+        else:
+            variant = "expiry"
+        result = await print_label(product["name"], entry["best_before_date"], stock_id, variant=variant)
         if not result["ok"]:
             raise HTTPException(503, result["error"])
         return result

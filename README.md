@@ -38,6 +38,11 @@ banner, a `5… 4… 3… 2… 1…` countdown and a large **UNDO / CANCEL** but
   The server never consumes early.
 * With a manufacturer barcode, Grocy picks the entry using its normal order (opened
   items first, then the soonest due date). The card shows the entry that will be used.
+* **Long-life items** (major category `Long-Life`): scanning an *unopened* item first
+  asks **Consume 1** or **Open 1**. Opening marks the unit as opened, sets its use-by
+  date to today plus the product's *use by days after opened* (3–14, default 7) and
+  prints a new `USE BY: YYYY-MM-DD` label. Already-opened units are consumed without
+  the question.
 
 ### SEARCH
 * Shows the **total current inventory** (`GET /api/stock`), colour-coded by expiry.
@@ -54,7 +59,12 @@ banner, a `5… 4… 3… 2… 1…` countdown and a large **UNDO / CANCEL** but
   and – if the product is set to move when opened – moves just that unit (e.g. one
   long-life milk from the cupboard to the fridge); the rest stays put.
   The product header has **✎ Category** to recategorise a product that was entered
-  incorrectly (`POST /api/products/{id}/category`).
+  incorrectly (`POST /api/products/{id}/category`) and **⚙ Settings** for per-product
+  behaviour: what happens **when one is opened** (stays in place / move to a location),
+  the long-life **use by days after opened** (3–14, `POST /api/products/{id}/use-by-days`)
+  and the **minimum quantity** (`POST /api/products/{id}/min-stock`) – when stock falls
+  below it after a consume, the kiosk asks Grocy to put the product on the shopping
+  list (`POST /api/stock/shoppinglist/add-missing-products`).
 
 ### ADD
 1. **Product.** Scan a manufacturer barcode (`GET /api/stock/products/by-barcode/…`),
@@ -62,7 +72,8 @@ banner, a `5… 4… 3… 2… 1…` countdown and a large **UNDO / CANCEL** but
    *create product* dialog with category and location buttons (each with a **＋ New…**
    option that creates the Grocy product group / location in place). It calls
    `POST /api/objects/products` and links the barcode with
-   `POST /api/objects/product_barcodes`.
+   `POST /api/objects/product_barcodes`. The dialog also sets an optional
+   **minimum quantity** for the shopping list.
 2. **Expiry.** Quick buttons: `+3 Days`, `+5 Days`, `+1 Week`, `+2 Weeks`, `+1 Month`,
    `+3 Months`, `+6 Months`, `No Expiry`. There is also a date picker. The pre-selected
    date is the product's *default due days*, or `GROCY_DEFAULT_BEST_BEFORE_DAYS` if
@@ -79,7 +90,9 @@ banner, a `5… 4… 3… 2… 1…` countdown and a large **UNDO / CANCEL** but
    * Prints a 62 mm label with the product name in large bold text, `EXP: YYYY-MM-DD`
      in bold (omitted when the item has no expiry), and a Code 128 barcode of
      `${BARCODE_PREFIX}${stock_id}`. The barcode has quiet zones and the
-     human-readable code printed below it.
+     human-readable code printed below it. **Long-life products** print
+     `Use by: S M T W T F S` instead of the EXP line, so the day it must be used by
+     can be circled with a pen when the item is opened.
    * A toast confirms the print and offers **Reprint**. If the printer fails, the stock
      is still saved and you can reprint. The result screen also offers **Open one now**
      to immediately open (and move) one of the items just added.
@@ -109,6 +122,14 @@ The category buttons come from Grocy's **Product groups**
   for `Dairy > Butter`.
 * Give each product a group, and a **Default due days** value if you can, so the
   expiry date is pre-filled.
+* The major category **`Long-Life`** (also matches `Long Life`/`long-life`) is special:
+  its products get circle-a-day `Use by: S M T W T F S` labels and the consume-or-open
+  question described above.
+* **Default tree:** the status dialog (tap the Grocy/Printer indicator) has a
+  **📂 Create default categories** button that seeds a ready-made kitchen tree
+  (Bakery, Condiments, Cooking, Drinks, Frozen, Meat, Long-Life, Pantry, Snacks, …)
+  via `POST /api/categories/seed-defaults`. It only creates groups that don't exist
+  yet, so it is safe to run on a populated Grocy.
 
 ## Setup
 
@@ -147,10 +168,13 @@ Labels printed by Grocy itself (`grcy:s:<stock_id>`, `grcy:p:<id>`,
 * Turn **Editor Lite off**. The green LED must be off, otherwise the printer acts as a
   USB drive and ignores raster data.
 * On the host, `ls /dev/usb/lp0` should show the device. `lsusb` shows `04f9:209b`.
-* `docker-compose.yml` mounts the whole `/dev/usb` directory and `/dev/bus/usb`, and
-  adds cgroup rules, so a printer that is power-cycled or re-plugged keeps working –
-  even when the kernel renumbers it (e.g. `/dev/usb/lp0` → `/dev/usb/lp1`). The kiosk
-  automatically switches to the new device node when the configured one disappears.
+* `docker-compose.yml` mounts the whole `/dev` directory and adds cgroup rules, so a
+  printer that is power-cycled or re-plugged keeps working – even when the kernel
+  renumbers it (e.g. `/dev/usb/lp0` → `/dev/usb/lp1`). The kiosk automatically
+  switches to the new device node when the configured one disappears. Mounting only
+  `/dev/usb` (or a single node via `devices:`) does **not** survive a power cycle:
+  the kernel deletes and recreates `/dev/usb`, leaving the container with a stale
+  mount until it is restarted.
 
 ### 3. Scanner (Zebra DS2278)
 Use the default **USB HID keyboard** mode with an **Enter** suffix (factory default).

@@ -1,4 +1,4 @@
-from app.categories import UNCATEGORIZED, build_category_tree, split_group_name
+from app.categories import UNCATEGORIZED, build_category_tree, default_group_names, split_group_name
 
 
 def test_split_group_name_major_and_sub():
@@ -36,3 +36,33 @@ def test_build_category_tree_groups_and_sorts():
     assert dairy["group_ids"] == [1, 4, 5]
     assert [s["name"] for s in dairy["subcategories"]] == ["Butter", "Milk"]
     assert dairy["subcategories"][0]["group_ids"] == [4]
+
+
+def test_default_group_names_use_delimiter():
+    names = default_group_names()
+    assert "Bakery/Bread & Rolls" in names
+    assert "Long-Life/UHT Milk & Plant Milks" in names
+    assert len(names) == len(set(names))
+    custom = default_group_names(" > ")
+    assert "Bakery > Bread & Rolls" in custom
+
+
+def test_seed_default_categories(client, fake_grocy):
+    # one default already exists (different case) and must not be duplicated
+    fake_grocy.product_groups.append({"id": 50, "name": "bakery/bread & rolls"})
+    res = client.post("/api/categories/seed-defaults")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["skipped"] == 1
+    assert "Bakery/Bread & Rolls" not in body["created"]
+    assert "Long-Life/UHT Milk & Plant Milks" in body["created"]
+    names = [g["name"] for g in fake_grocy.product_groups]
+    assert names.count("bakery/bread & rolls") == 1
+    assert "Snacks/Chocolate & Lollies" in names
+    # idempotent: running again creates nothing
+    again = client.post("/api/categories/seed-defaults").json()
+    assert again["created"] == []
+    # seeded Long-Life groups mark their products as long-life in the catalog
+    group_id = next(g["id"] for g in fake_grocy.product_groups if g["name"] == "Long-Life/Jarred Simmer & Pasta Sauces")
+    updated = client.post("/api/products/13/category", json={"product_group_id": group_id}).json()
+    assert updated["long_life"] is True

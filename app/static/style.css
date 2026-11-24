@@ -24,6 +24,14 @@ input, button { font: inherit; }
 .big { font-size: 1.6rem; font-weight: 700; }
 .label { color: var(--muted); font-size: .85rem; text-transform: uppercase; letter-spacing: .06em; }
 
+/* Consistent per-mode colouring: remove/consume = red, search = yellow, add = green.
+   The accent is applied to tabs, active chips, segmented buttons and panels –
+   including modals opened from that mode. */
+body { --mode-accent: var(--accent); --mode-accent-text: #fff; }
+body[data-mode="consume"] { --mode-accent: var(--danger); --mode-accent-text: #fff; }
+body[data-mode="search"] { --mode-accent: var(--warn); --mode-accent-text: #111; }
+body[data-mode="add"] { --mode-accent: var(--ok); --mode-accent-text: #fff; }
+
 #scan-sink { position: fixed; left: -1000px; top: 0; width: 1px; height: 1px; opacity: 0; }
 
 /* ------------------------------------------------------------------ top bar */
@@ -33,7 +41,7 @@ input, button { font: inherit; }
 .tab { min-height: var(--tap); border: 3px solid var(--panel-2); border-radius: var(--radius); background: var(--panel);
   color: var(--text); font-size: 1.5rem; font-weight: 800; letter-spacing: .08em; cursor: pointer; }
 .tab.active[data-mode="consume"] { background: var(--danger); border-color: var(--danger); }
-.tab.active[data-mode="search"] { background: var(--accent); border-color: var(--accent); }
+.tab.active[data-mode="search"] { background: var(--warn); border-color: var(--warn); color: #111; }
 .tab.active[data-mode="add"] { background: var(--ok); border-color: var(--ok); }
 .status { display: grid; grid-template-columns: auto auto; align-items: center; gap: 4px 8px; padding: 6px 14px;
   border-radius: var(--radius); border: 2px solid var(--panel-2); background: var(--panel); color: var(--muted); font-size: .8rem; }

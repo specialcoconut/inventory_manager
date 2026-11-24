@@ -160,6 +160,10 @@ class GrocyClient:
     async def edit_stock_entry(self, entry_id: int, payload: dict) -> list[dict]:
         return await self._request("PUT", f"stock/entry/{int(entry_id)}", json=payload) or []
 
+    async def add_missing_products_to_shoppinglist(self) -> None:
+        """Let Grocy add every product below its min stock amount to the shopping list."""
+        await self._request("POST", "stock/shoppinglist/add-missing-products")
+
     # ----------------------------------------------------------------- products
     async def create_product(
         self,
@@ -168,6 +172,7 @@ class GrocyClient:
         qu_id: int,
         product_group_id: Optional[int] = None,
         default_best_before_days: int = 0,
+        min_stock_amount: Optional[float] = None,
     ) -> int:
         base: dict[str, Any] = {
             "name": name,
@@ -178,6 +183,8 @@ class GrocyClient:
         }
         if product_group_id is not None:
             base["product_group_id"] = product_group_id
+        if min_stock_amount is not None:
+            base["min_stock_amount"] = min_stock_amount
         try:
             # Grocy >= 4 requires the consume/price quantity units as well.
             return await self.create_object("products", {**base, "qu_id_consume": qu_id, "qu_id_price": qu_id})

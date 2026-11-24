@@ -203,6 +203,7 @@
   // ------------------------------------------------------------------ modes
   function setMode(mode) {
     state.mode = mode;
+    document.body.dataset.mode = mode; // drives per-mode accent colours in CSS
     $$(".tab").forEach((t) => t.classList.toggle("active", t.dataset.mode === mode));
     $$(".view").forEach((v) => v.classList.toggle("active", v.id === `view-${mode}`));
     if (mode === "search") Search.refresh();
@@ -340,6 +341,12 @@
     return { row, show: () => { row.classList.remove("hidden"); input.focus(); } };
   }
 
+  // Keep the cached catalog entry in sync after a per-product settings change.
+  function syncCatalogProduct(updated) {
+    const cat = state.catalog.products.find((x) => x.id === updated.id);
+    if (cat) Object.assign(cat, updated);
+  }
+
   // ================================================================ CONSUME
   const Consume = (() => {
     const card = $("#consume-card");
@@ -412,10 +419,33 @@
       }
     }
 
-    async function scan(code) {
+    // Unopened long-life item: the user decides whether to consume or open it.
+    function choiceDialog(item, code) {
+      openModal(h("div", {},
+        h("h2", {}, item.product_name),
+        h("p", { class: "muted" }, "Long-life item – take one out of stock, or open it now?"),
+        h("div", { class: "button-row" },
+          h("button", { class: "btn btn-danger", onclick: () => { closeModal(); scan(code, "consume"); } }, "Consume 1"),
+          h("button", {
+            class: "btn btn-primary",
+            onclick: async () => {
+              closeModal();
+              await openOne(item.stock_id);
+              Search.invalidate();
+            },
+          }, "Open 1 – print use-by label"),
+          h("button", { class: "btn btn-secondary", onclick: closeModal }, "Cancel"))
+      ), (nextCode) => { closeModal(); scan(nextCode); });
+    }
+
+    async function scan(code, action = "auto") {
       stopTimer();
       try {
-        const res = await api("POST", "/api/consume", { code });
+        const res = await api("POST", "/api/consume", { code, action });
+        if (res.choice_required) {
+          choiceDialog(res.item, code);
+          return;
+        }
         res.committed_previous.forEach((p) => { if (p.status !== "pending") addHistory(p); });
         const p = res.pending;
         state.consume.current = p;
@@ -582,6 +612,7 @@
           h("div", {}, h("h2", {}, p.name), h("div", { class: "muted" }, p.sub ? `${p.major} › ${p.sub}` : p.major)),
           h("div", { class: "header-actions" },
             h("button", { class: "btn btn-secondary", onclick: () => changeCategoryDialog(p) }, "✎ Category"),
+            h("button", { class: "btn btn-secondary", onclick: () => productSettingsDialog(p) }, "⚙ Settings"),
             h("button", { class: "btn btn-secondary", onclick: () => { shownProductId = null; resultBox.classList.add("hidden"); } }, "✕ Close"))),
         entries.length ? h("ul", { class: "entries" }, rows) : h("p", { class: "big muted" }, "Not in stock")
       );
@@ -622,6 +653,79 @@
         h("h2", {}, `Category for ${product.name}`),
         h("div", { class: "field" }, majorsEl, groupsEl),
         h("div", { class: "button-row" }, h("button", { class: "btn btn-secondary", onclick: closeModal }, "Cancel"), saveBtn)));
+    }
+
+    // Per-product settings: what happens on open, use-by days (long-life) and
+    // the minimum stock amount that puts the product on the shopping list.
+    function productSettingsDialog(product) {
+      const chip = (label, active, onclick) =>
+        h("button", { class: `chip${active ? " active" : ""}`, onclick }, label);
+
+      async function apply(path, body, message) {
+        try {
+          const updated = await api("POST", `/api/products/${product.id}/${path}`, body);
+          Object.assign(product, updated);
+          syncCatalogProduct(updated);
+          renderAll();
+          if (message) toast(message(updated), "info", { duration: 2500 });
+        } catch (e) { toast(e.message, "bad"); }
+      }
+
+      const openChips = h("div", { class: "chip-row" });
+      const useByChips = h("div", { class: "chip-row" });
+
+      // Minimum stock stepper – applied shortly after the last tap.
+      let minQty = Math.round(product.min_stock_amount || 0);
+      let minTimer = null;
+      const minValue = h("div", { class: "qty-value big" });
+      function setMinQty(value) {
+        minQty = Math.max(0, Math.min(999, value));
+        minValue.textContent = minQty === 0 ? "Off" : String(minQty);
+        if (minTimer) clearTimeout(minTimer);
+        minTimer = setTimeout(() => {
+          minTimer = null;
+          apply("min-stock", { amount: minQty }, (u) => u.min_stock_amount > 0
+            ? `${product.name}: added to the shopping list below ${fmtAmount(u.min_stock_amount)}`
+            : `${product.name}: no minimum stock`);
+        }, 700);
+      }
+
+      function renderAll() {
+        openChips.replaceChildren(
+          chip("Stays in place", product.open_location_id == null,
+            () => apply("open-behavior", { location_id: null }, () => `${product.name}: opened items stay in place`)),
+          ...state.catalog.locations.map((loc) => chip(`Move to ${loc.name}`, product.open_location_id === loc.id,
+            () => apply("open-behavior", { location_id: loc.id }, (u) => `${product.name}: opened items move to ${u.open_location_name}`))));
+        const days = [];
+        for (let d = 3; d <= 14; d++) days.push(d);
+        useByChips.replaceChildren(
+          chip("Default (7)", !product.use_by_days_after_open,
+            () => apply("use-by-days", { days: null })),
+          ...days.map((d) => chip(String(d), product.use_by_days_after_open === d,
+            () => apply("use-by-days", { days: d }))));
+        minValue.textContent = minQty === 0 ? "Off" : String(minQty);
+      }
+      renderAll();
+
+      openModal(h("div", {},
+        h("h2", {}, `Settings for ${product.name}`),
+        h("div", { class: "field" },
+          h("div", { class: "label" }, "When one is opened"), openChips),
+        h("div", { class: "field" },
+          h("div", { class: "label" }, "Use by days after opened"),
+          h("div", { class: "muted" }, product.long_life
+            ? "Long-life item: opening sets the use-by date and prints a new label."
+            : "Only used for items in the Long Life category."),
+          useByChips),
+        h("div", { class: "field" },
+          h("div", { class: "label" }, "Minimum quantity"),
+          h("div", { class: "muted" }, "Grocy adds this product to the shopping list when stock falls below it."),
+          h("div", { class: "qty-stepper" },
+            h("button", { class: "btn btn-qty", onclick: () => setMinQty(minQty - 1) }, "−"),
+            minValue,
+            h("button", { class: "btn btn-qty", onclick: () => setMinQty(minQty + 1) }, "＋"))),
+        h("div", { class: "button-row" },
+          h("button", { class: "btn btn-primary", onclick: closeModal }, "Done"))));
     }
 
     async function scan(code) {
@@ -672,9 +776,19 @@
   async function openOne(stockId) {
     try {
       const res = await api("POST", `/api/stock/${encodeURIComponent(stockId)}/open`);
-      toast(res.moved
-        ? `Opened 1 × ${res.product_name} → moved to ${res.location_name}`
-        : `Opened 1 × ${res.product_name}${res.location_name ? ` (kept in ${res.location_name})` : ""}`, "ok");
+      const where = res.moved
+        ? ` → moved to ${res.location_name}`
+        : res.location_name ? ` (kept in ${res.location_name})` : "";
+      if (res.long_life && res.use_by_date) {
+        const label = res.print && res.print.ok
+          ? " · use-by label printed"
+          : ` · label NOT printed${res.print ? ` – ${res.print.error}` : ""}`;
+        toast(`Opened 1 × ${res.product_name}${where} · use by ${res.use_by_date}${label}`,
+          res.print && res.print.ok ? "ok" : "bad",
+          res.print && res.print.ok ? {} : { action: { label: "Retry print", run: () => reprint(stockId) }, duration: 8000 });
+      } else {
+        toast(`Opened 1 × ${res.product_name}${where}`, "ok");
+      }
       Search.invalidate();
       return res;
     } catch (e) {
@@ -753,8 +867,7 @@
         try {
           const updated = await api("POST", `/api/products/${product.id}/open-behavior`, { location_id: locationId });
           Object.assign(product, updated);
-          const cat = state.catalog.products.find((x) => x.id === product.id);
-          if (cat) Object.assign(cat, updated);
+          syncCatalogProduct(updated);
           renderOpenBehavior();
           toast(updated.open_location_id === null
             ? `${product.name}: opened items stay in place`
@@ -774,6 +887,7 @@
       state.add.product = product;
       $("#add-product-name").textContent = product.name;
       $("#add-product-category").textContent = product.sub ? `${product.major} › ${product.sub}` : product.major;
+      $("#longlife-hint").classList.toggle("hidden", !product.long_life);
       setExpiry(defaultExpiry(product));
       setQty(1);
       setLabelMode("individual");
@@ -857,13 +971,28 @@
       }
       renderLocs();
 
+      // Minimum quantity: below this Grocy puts the product on the shopping list.
+      let minStock = 0;
+      const minValue = h("div", { class: "qty-value big" }, "Off");
+      function setMinStock(value) {
+        minStock = Math.max(0, Math.min(999, value));
+        minValue.textContent = minStock === 0 ? "Off" : String(minStock);
+      }
+      const minRow = h("div", { class: "qty-stepper" },
+        h("button", { class: "btn btn-qty", onclick: () => setMinStock(minStock - 1) }, "−"),
+        minValue,
+        h("button", { class: "btn btn-qty", onclick: () => setMinStock(minStock + 1) }, "＋"));
+
       saveBtn.addEventListener("click", async () => {
         const name = nameInput.value.trim();
         if (!name) { toast("Enter a product name", "bad"); nameInput.focus(); return; }
         if (sel.major !== null && sel.groupId === null) { toast("Pick a subcategory", "bad"); return; }
         saveBtn.disabled = true;
         try {
-          const product = await api("POST", "/api/products", { name, barcode, product_group_id: sel.groupId, location_id: sel.locationId });
+          const product = await api("POST", "/api/products", {
+            name, barcode, product_group_id: sel.groupId, location_id: sel.locationId,
+            min_stock_amount: minStock || null,
+          });
           closeModal();
           toast(`Created ${product.name}`, "ok");
           await loadCatalog();
@@ -881,6 +1010,8 @@
         h("div", { class: "field" }, h("div", { class: "label" }, "Name"), nameInput),
         h("div", { class: "field" }, h("div", { class: "label" }, "Category"), majorsEl, groupsEl, catAdder.row),
         h("div", { class: "field" }, h("div", { class: "label" }, "Location"), locationsEl, locAdder.row),
+        h("div", { class: "field" },
+          h("div", { class: "label" }, "Minimum quantity (shopping list)"), minRow),
         h("div", { class: "button-row" }, h("button", { class: "btn btn-secondary", onclick: closeModal }, "Cancel"), saveBtn)
       ), (code) => {
         barcode = code;
@@ -985,6 +1116,17 @@
         h("button", { class: "btn btn-secondary", onclick: async () => {
           try { await api("POST", "/api/print/test"); toast("Test label printed", "ok"); } catch (e) { toast(`Test print failed: ${e.message}`, "bad"); }
         } }, "⎙ Print test label"),
+        h("button", { class: "btn btn-secondary", onclick: async () => {
+          try {
+            const res = await api("POST", "/api/categories/seed-defaults");
+            await loadCatalog();
+            Search.invalidate();
+            Add.render();
+            toast(res.created.length
+              ? `Created ${res.created.length} categories (${res.skipped} already existed)`
+              : "All default categories already exist", "ok");
+          } catch (e) { toast(`Could not create categories: ${e.message}`, "bad"); }
+        } }, "📂 Create default categories"),
         h("button", { class: "btn btn-secondary", onclick: () => location.reload() }, "↻ Reload app"),
         h("button", { class: "btn btn-primary", onclick: closeModal }, "Close"))));
   });
