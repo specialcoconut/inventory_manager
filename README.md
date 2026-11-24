@@ -125,11 +125,12 @@ The category buttons come from Grocy's **Product groups**
 * The major category **`Long-Life`** (also matches `Long Life`/`long-life`) is special:
   its products get circle-a-day `Use by: S M T W T F S` labels and the consume-or-open
   question described above.
-* **Default tree:** the status dialog (tap the Grocy/Printer indicator) has a
-  **📂 Create default categories** button that seeds a ready-made kitchen tree
-  (Bakery, Condiments, Cooking, Drinks, Frozen, Meat, Long-Life, Pantry, Snacks, …)
-  via `POST /api/categories/seed-defaults`. It only creates groups that don't exist
-  yet, so it is safe to run on a populated Grocy.
+* **Default tree:** the kiosk seeds a ready-made kitchen tree (Bakery, Condiments,
+  Cooking, Drinks, Frozen, Meat, Long-Life, Pantry, Snacks, …) into Grocy at startup
+  (disable with `SEED_DEFAULT_CATEGORIES=false`). It only creates groups that don't
+  exist yet, so it is safe on a populated Grocy; it never modifies or deletes your
+  own groups. The status dialog (tap the Grocy/Printer indicator) also has a
+  **📂 Create default categories** button (`POST /api/categories/seed-defaults`).
 
 ## Setup
 
@@ -148,6 +149,7 @@ cp .env.example .env
 | `GROCY_DEFAULT_BEST_BEFORE_DAYS` | `7` | Fallback expiry offset when the product has no default due days |
 | `GROCY_DEFAULT_QUANTITY_UNIT_ID` | *(empty)* | Quantity unit for products created at the kiosk. If empty, the first unit is used |
 | `CATEGORY_DELIMITER` | `/` | Splits product group names into Major → Subcategory |
+| `SEED_DEFAULT_CATEGORIES` | `true` | Create the suggested category tree in Grocy at startup (idempotent) |
 | `PRINTER_MODEL` | `QL-800` | Any model `brother_ql` supports |
 | `PRINTER_BACKEND` | `linux_kernel` | `linux_kernel` or `pyusb` (`network` also works) |
 | `PRINTER_IDENTIFIER` | `file:///dev/usb/lp0` | Use `usb://0x04f9:0x209b` with the `pyusb` backend |

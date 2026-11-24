@@ -385,6 +385,20 @@
 
     function stopTimer() { if (state.consume.timer) { clearInterval(state.consume.timer); state.consume.timer = null; } }
 
+    // Return to the idle "scan an item" screen a while after a result was shown.
+    const RESULT_CLEAR_MS = 30000;
+    let clearTimer = null;
+    function cancelClear() { if (clearTimer) { clearTimeout(clearTimer); clearTimer = null; } }
+    function scheduleClear() {
+      cancelClear();
+      clearTimer = setTimeout(() => {
+        clearTimer = null;
+        state.consume.lastShown = null;
+        card.classList.add("hidden");
+        $("#consume-idle").classList.remove("hidden");
+      }, RESULT_CLEAR_MS);
+    }
+
     function finish(p) {
       stopTimer();
       if (state.consume.current && state.consume.current.id === p.id) state.consume.current = null;
@@ -392,6 +406,7 @@
         if (p.status === "committed") setState("committed", "Removed from Grocy");
         else if (p.status === "cancelled") setState("cancelled", "Cancelled — Item kept in stock");
         else if (p.status === "failed") setState("failed", `Not removed: ${p.error || "Grocy error"}`);
+        scheduleClear();
       }
       addHistory(p);
       Search.invalidate();
@@ -440,6 +455,7 @@
 
     async function scan(code, action = "auto") {
       stopTimer();
+      cancelClear();
       try {
         const res = await api("POST", "/api/consume", { code, action });
         if (res.choice_required) {
@@ -475,6 +491,7 @@
           ["#ci-name", "#ci-expiry", "#ci-location", "#ci-stock"].forEach((s) => { $(s).textContent = "—"; });
           $("#ci-name").textContent = code;
           setState("failed", e.status === 404 ? "Not found" : e.status === 409 ? "Not in stock" : "Error");
+          scheduleClear();
         }
         toast(e.message, "bad");
       }
@@ -803,7 +820,11 @@
 
     function qtyPrefix(amount) { return amount > 1 ? `${fmtAmount(amount)}× ` : ""; }
 
+    // The "Added to Grocy" result screen clears back to step 1 after a while.
+    const RESULT_CLEAR_MS = 30000;
+    let resultTimer = null;
     function showStep(step) {
+      if (resultTimer) { clearTimeout(resultTimer); resultTimer = null; }
       $("#add-step-1").classList.toggle("hidden", step !== 1);
       $("#add-step-2").classList.toggle("hidden", step !== 2);
       $("#add-result").classList.toggle("hidden", step !== 3);
@@ -812,6 +833,16 @@
         li.classList.toggle("active", n === step);
         li.classList.toggle("done", n < step);
       });
+      if (step === 3) {
+        resultTimer = setTimeout(() => {
+          resultTimer = null;
+          if (!$("#add-result").classList.contains("hidden")) {
+            state.add.product = null;
+            showStep(1);
+            render();
+          }
+        }, RESULT_CLEAR_MS);
+      }
     }
 
     function render() {

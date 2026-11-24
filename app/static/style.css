@@ -56,7 +56,7 @@ main { padding: 14px; max-width: 1400px; margin: 0 auto; }
   font-weight: 700; font-size: 1.15rem; color: var(--text); background: var(--panel-2); }
 .btn:active { transform: scale(.97); filter: brightness(1.2); }
 .btn:disabled { opacity: .5; }
-.btn-primary { background: var(--ok); }
+.btn-primary { background: var(--mode-accent); color: var(--mode-accent-text); }
 .btn-secondary { background: var(--panel-2); border: 2px solid #3a4450; }
 .btn-danger { background: var(--danger); }
 .btn.wide { width: 100%; margin-top: 14px; }
@@ -69,21 +69,22 @@ main { padding: 14px; max-width: 1400px; margin: 0 auto; }
 .idle h1 { font-size: 2.4rem; margin: 10px 0; }
 .idle p { color: var(--muted); font-size: 1.2rem; }
 .idle-icon { font-size: 4rem; letter-spacing: -6px; color: var(--muted); }
-.consume-card { border-radius: 24px; overflow: hidden; background: var(--panel); border: 3px solid var(--warn); }
-.consume-card.state-committed { border-color: var(--ok); }
+.consume-card { border-radius: 24px; overflow: hidden; background: var(--panel); border: 3px solid var(--danger); }
+.consume-card.state-committed { border-color: var(--danger); }
 .consume-card.state-cancelled { border-color: var(--info); }
 .consume-card.state-failed { border-color: var(--danger); }
-.banner { padding: 18px 24px; font-size: 2.2rem; font-weight: 900; background: var(--warn); color: #111; }
-.banner.ok, .state-committed .banner { background: var(--ok); color: #fff; }
+.banner { padding: 18px 24px; font-size: 2.2rem; font-weight: 900; background: var(--danger); color: #fff; }
+.banner.ok { background: var(--ok); color: #fff; }
+.state-committed .banner { background: var(--danger); color: #fff; }
 .state-cancelled .banner { background: var(--info); color: #fff; }
 .state-failed .banner, .banner.bad { background: var(--danger); color: #fff; }
 .consume-body { display: flex; gap: 24px; padding: 20px 24px; align-items: center; }
 .countdown { flex: 0 0 180px; text-align: center; }
-.countdown-number { font-size: 7rem; font-weight: 900; line-height: 1; color: var(--warn); }
+.countdown-number { font-size: 7rem; font-weight: 900; line-height: 1; color: var(--danger); }
 .countdown-number.tick { animation: tick .9s ease-out; }
 @keyframes tick { 0% { transform: scale(1.35); } 100% { transform: scale(1); } }
 .countdown-bar { height: 14px; border-radius: 7px; background: var(--panel-2); overflow: hidden; margin-top: 10px; }
-.countdown-fill { height: 100%; width: 100%; background: var(--warn); transform-origin: left; }
+.countdown-fill { height: 100%; width: 100%; background: var(--danger); transform-origin: left; }
 .state-committed .countdown, .state-cancelled .countdown, .state-failed .countdown { display: none; }
 .item-details { flex: 1; display: grid; grid-template-columns: max-content 1fr; gap: 10px 18px; margin: 0; font-size: 1.3rem; }
 .item-details dt { color: var(--muted); }
@@ -94,7 +95,7 @@ main { padding: 14px; max-width: 1400px; margin: 0 auto; }
 .history { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
 .history li { display: flex; justify-content: space-between; gap: 12px; padding: 14px 18px; background: var(--panel); border-radius: 12px; }
 .history .tag { font-weight: 700; }
-.tag.committed { color: var(--ok); } .tag.cancelled { color: var(--info); } .tag.failed { color: var(--danger); }
+.tag.committed { color: var(--danger); } .tag.cancelled { color: var(--info); } .tag.failed { color: var(--danger); }
 
 /* ----------------------------------------------------------- chips / search */
 .searchbar { display: flex; gap: 10px; margin-bottom: 12px; }
@@ -111,7 +112,7 @@ main { padding: 14px; max-width: 1400px; margin: 0 auto; }
 .chip { min-height: 64px; min-width: 110px; padding: 0 22px; border-radius: 999px; border: 3px solid #3a4450;
   background: var(--panel); color: var(--text); font-size: 1.2rem; font-weight: 700; cursor: pointer; }
 .chip.sub-chip { min-height: 56px; background: var(--panel-2); }
-.chip.active { background: var(--accent); border-color: var(--accent); }
+.chip.active { background: var(--mode-accent); border-color: var(--mode-accent); color: var(--mode-accent-text); }
 .chip.chip-add { border-style: dashed; color: var(--muted); }
 .inline-add { display: flex; gap: 10px; margin-top: 10px; align-items: stretch; }
 .inline-add input { flex: 1; min-width: 0; }
@@ -126,7 +127,7 @@ main { padding: 14px; max-width: 1400px; margin: 0 auto; }
 .exp-soon { border-left-color: var(--warn) !important; } .exp-soon .exp { color: var(--warn); font-weight: 700; }
 .exp-ok { border-left-color: var(--ok) !important; }
 
-.scan-result { background: var(--panel); border: 3px solid var(--accent); border-radius: 20px; padding: 18px; margin-bottom: 16px; }
+.scan-result { background: var(--panel); border: 3px solid var(--mode-accent); border-radius: 20px; padding: 18px; margin-bottom: 16px; }
 .scan-result header { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
 .scan-result .header-actions { display: flex; gap: 10px; flex-shrink: 0; }
 .scan-result h2 { margin: 0; font-size: 1.8rem; }
@@ -162,7 +163,7 @@ main { padding: 14px; max-width: 1400px; margin: 0 auto; }
 .seg-btn { min-height: 72px; min-width: 150px; padding: 0 20px; font-size: 1.2rem; font-weight: 700;
   background: var(--panel-2); border: 0; border-radius: 0; color: var(--text); }
 .seg-btn + .seg-btn { border-left: 3px solid #3a4450; }
-.seg-btn.active { background: var(--accent); }
+.seg-btn.active { background: var(--mode-accent); color: var(--mode-accent-text); }
 .seg-btn:disabled { opacity: .4; }
 .open-behavior { background: var(--panel); border-radius: var(--radius); padding: 16px 20px; margin: 12px 0; }
 .open-behavior > .label { margin-bottom: 10px; }

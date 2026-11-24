@@ -1,4 +1,19 @@
+import time
+
+from fastapi.testclient import TestClient
+
 from app.categories import UNCATEGORIZED, build_category_tree, default_group_names, split_group_name
+from app.grocy import GrocyClient
+from app.main import create_app
+
+
+def _wait_for(predicate, timeout=5.0):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.02)
+    return predicate()
 
 
 def test_split_group_name_major_and_sub():
@@ -66,3 +81,18 @@ def test_seed_default_categories(client, fake_grocy):
     group_id = next(g["id"] for g in fake_grocy.product_groups if g["name"] == "Long-Life/Jarred Simmer & Pasta Sauces")
     updated = client.post("/api/products/13/category", json={"product_group_id": group_id}).json()
     assert updated["long_life"] is True
+
+
+def test_startup_seeds_default_categories(settings, fake_grocy, printer, fake_off):
+    from app.external import ExternalProductLookup
+
+    settings.seed_default_categories = True
+    grocy = GrocyClient(settings.grocy_api_base, settings.grocy_api_key, transport=fake_grocy.transport())
+    external = ExternalProductLookup("http://off.test", transport=fake_off.transport())
+    app = create_app(settings, grocy=grocy, printer=printer, external=external)
+    with TestClient(app):
+        names = lambda: [g["name"] for g in fake_grocy.product_groups]  # noqa: E731
+        assert _wait_for(lambda: "Bakery/Bread & Rolls" in names())
+        assert _wait_for(lambda: set(default_group_names()) <= set(names()))
+        # pre-existing groups are untouched
+        assert "Dairy/Butter" in names()

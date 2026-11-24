@@ -25,6 +25,9 @@ class Settings(BaseSettings):
 
     # --- Categories ------------------------------------------------------------
     category_delimiter: str = "/"
+    # Create the suggested default category tree in Grocy at startup (idempotent;
+    # existing groups are never touched). Set to false to disable.
+    seed_default_categories: bool = True
 
     # --- Printer ---------------------------------------------------------------
     printer_model: str = "QL-800"

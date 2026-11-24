@@ -57,6 +57,7 @@ def settings():
         grocy_default_location_id=None,
         grocy_default_best_before_days=7,
         consume_countdown_seconds=1,
+        seed_default_categories=False,  # tests opt in explicitly
     )
 
 

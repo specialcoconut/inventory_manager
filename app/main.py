@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 import logging
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import Literal, Optional
 
@@ -112,12 +113,32 @@ def create_app(
         external = ExternalProductLookup(settings.external_lookup_url, settings.external_lookup_timeout_seconds)
     service = InventoryService(grocy, settings)
 
+    async def _seed_default_categories() -> None:
+        """Create the suggested category tree once Grocy is reachable (idempotent)."""
+        for attempt in range(60):
+            if attempt:
+                await asyncio.sleep(60)
+            try:
+                result = await service.seed_default_categories()
+            except GrocyError as exc:
+                logger.warning("Default category seeding postponed (Grocy unreachable?): %s", exc)
+                continue
+            if result["created"]:
+                logger.info("Created %d default categories in Grocy", len(result["created"]))
+            return
+        logger.error("Gave up seeding default categories – Grocy never became reachable")
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         app.state.consumer = ConsumeManager(service.consume, settings.consume_countdown_seconds)
+        seed_task = asyncio.create_task(_seed_default_categories()) if settings.seed_default_categories else None
         try:
             yield
         finally:
+            if seed_task is not None:
+                seed_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await seed_task
             await app.state.consumer.shutdown()
             if owns_grocy:
                 await grocy.aclose()
